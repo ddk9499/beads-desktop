@@ -40,3 +40,12 @@ swift test
 
 Data from the remote is untrusted: tree entries are validated, SQL never interpolates unvalidated strings,
 text is rendered as plain text. dolt metrics and version checks are disabled.
+
+## Debugging the UI from a script (Debug builds only)
+
+```sh
+build/DerivedData/Build/Products/Debug/BeadsDesktop.app/Contents/MacOS/BeadsDesktop \
+  -debugSelectProject gastownhall/beads -debugSelectIssue bd-7vb13 -debugPlainDetail YES \
+  -debugSnapshot /tmp/shot.png -debugSnapshotDelay 8
+```
+Writes a PNG of the main window and quits; no screen-recording permission needed.

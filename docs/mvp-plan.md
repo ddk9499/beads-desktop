@@ -129,5 +129,22 @@ Found while building M1 (all fixed):
   `DOLT_DISABLE_VERSION_CHECKS`.
 - dolt needs a writable `noms/` (LOCK file) even for reads; parallel reads of one snapshot are fine.
 
-Next: M2 (Board with 5 columns, real Detail, Add-project UX polish), then M3/M4.
+**M2 ✅** (2026-11-18):
+- Board: Backlog · Ready · In Progress · Blocked · Done, same placement rules as Scotty (`lib/board-columns.ts`):
+  blocked = status `blocked` or open with an unclosed `blocks`/`conditional-blocks`/`waits-for` target (missing target
+  counts as open; `parent-child` is hierarchy, not a blocker); `hooked` → In Progress; custom statuses by beads
+  category (active→Ready, wip→In Progress, done→Done, frozen→Backlog). Empty Blocked column hidden; Done limited to
+  closed within 7/14/30 days or all. Sort: priority or recently updated.
+- Cards: type icon, id, 👤/🤖 (allowlist in Settings), priority, title, parent epic, epic progress, "Blocked by …",
+  labels, assignee.
+- Detail inspector: fields, epic/children with progress, Blocked by / Blocks / Related (clickable), description/design/
+  acceptance/notes and comments as safe inline markdown (http(s) links only).
+- List view (sortable table) as an alternative to the board.
+- Add Project: live address parsing, key picker, "Check access" (which account the key signs in as + whether
+  `refs/dolt/data` exists).
+- A failed refresh keeps the last snapshot on screen with a banner.
+- Debug-only launch flags for UI checks: `-debugSelectProject owner/repo -debugSelectIssue <id> -debugPlainDetail YES
+  -debugSnapshot <png>` (window snapshots can't render the Liquid Glass inspector, hence the plain-detail mode).
+
+Next: M3 (Epics, Focus, filters/search), M4 (polling + notifications of changes).
 Known gap: snapshot cleanup can race a detail read of the previous snapshot (rare; retry on failure in M4).

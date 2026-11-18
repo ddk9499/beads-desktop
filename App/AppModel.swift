@@ -4,11 +4,18 @@ import Observation
 
 @MainActor @Observable
 final class AppModel {
-    enum ProjectState {
-        case idle
-        case syncing
-        case loaded(BeadsData, snapshot: URL)
-        case failed(String)
+    /// Per-project UI state. Data and errors are independent: a failed refresh keeps showing the last snapshot.
+    struct ProjectState {
+        var board: BoardIndex?
+        var snapshot: URL?
+        var isSyncing = false
+        var error: String?
+    }
+
+    /// Result of the "Check access" step in the Add Project sheet.
+    struct AccessCheck {
+        var account: Result<String, Error>
+        var data: Result<String?, Error>
     }
 
     private(set) var projects: [Project] = []
@@ -45,10 +52,16 @@ final class AppModel {
             toolStatus = "Setup failed"
             return
         }
-        for project in projects { await loadCachedThenSync(project.id) }
+        await withTaskGroup(of: Void.self) { group in
+            for project in projects { group.addTask { await self.loadCachedThenSync(project.id) } }
+        }
     }
 
-    func state(of id: UUID) -> ProjectState { states[id] ?? .idle }
+    func state(of id: UUID) -> ProjectState { states[id] ?? ProjectState() }
+
+    func project(_ id: UUID) -> Project? { projects.first { $0.id == id } }
+
+    // MARK: - Projects
 
     func addProject(address: String, keyPath: String?) async throws -> Project {
         let remote = try RemoteURL.parse(address)
@@ -56,7 +69,7 @@ final class AppModel {
         let project = Project(remote: remote, identity: SSHIdentity(privateKeyPath: keyPath))
         projects.append(project)
         try save()
-        await sync(project.id)
+        Task { await sync(project.id) }
         return project
     }
 
@@ -67,41 +80,67 @@ final class AppModel {
         if let env { try? FileManager.default.removeItem(at: env.paths.projectDir(id)) }
     }
 
+    func checkAccess(address: String, keyPath: String?) async throws -> AccessCheck {
+        guard let env else { throw CocoaError(.featureUnsupported) }
+        let remote = try RemoteURL.parse(address)
+        let identity = SSHIdentity(privateKeyPath: keyPath)
+        async let account = Result { try await SSHProbe(env: env).account(host: remote.host, user: remote.user, identity: identity) }
+        async let data = Result { try await GitClient(env: env).remoteDataRef(remote, identity: identity) }
+        return await AccessCheck(account: account, data: data)
+    }
+
+    // MARK: - Sync
+
     func loadCachedThenSync(_ id: UUID) async {
-        guard let service, let project = projects.first(where: { $0.id == id }) else { return }
-        if let (data, url) = try? await service.loadCached(project) { states[id] = .loaded(data, snapshot: url) }
+        guard let service, let project = project(id) else { return }
+        if let (data, url) = try? await service.loadCached(project) {
+            await apply(data, snapshot: url, to: id)
+        }
         await sync(id)
     }
 
-    func sync(_ id: UUID) async {
-        guard let service, let project = projects.first(where: { $0.id == id }) else { return }
-        if case .loaded = state(of: id) {} else { states[id] = .syncing }
-        do {
-            switch try await service.sync(project) {
-            case .unchanged:
-                if case .loaded = state(of: id) {} else if let (data, url) = try await service.loadCached(project) {
-                    states[id] = .loaded(data, snapshot: url)
-                }
-            case let .updated(data, snapshot):
-                states[id] = .loaded(data, snapshot: snapshot)
-                update(id) { $0.lastCommit = data.commit }
-            }
-            update(id) { $0.lastSyncAt = .now }
-        } catch {
-            states[id] = .failed("\(error)")
+    func syncAll() async {
+        await withTaskGroup(of: Void.self) { group in
+            for project in projects { group.addTask { await self.sync(project.id) } }
         }
     }
 
+    func sync(_ id: UUID) async {
+        guard let service, let project = project(id) else { return }
+        states[id, default: ProjectState()].isSyncing = true
+        defer { states[id]?.isSyncing = false }
+        do {
+            switch try await service.sync(project) {
+            case .unchanged:
+                if state(of: id).board == nil, let (data, url) = try await service.loadCached(project) {
+                    await apply(data, snapshot: url, to: id)
+                }
+            case let .updated(data, snapshot):
+                await apply(data, snapshot: snapshot, to: id)
+                update(id) { $0.lastCommit = data.commit }
+            }
+            update(id) { $0.lastSyncAt = .now }
+            states[id]?.error = nil
+        } catch {
+            states[id, default: ProjectState()].error = "\(error)"
+        }
+    }
+
+    private func apply(_ data: BeadsData, snapshot: URL, to id: UUID) async {
+        let board = await Task.detached(priority: .userInitiated) { BoardIndex(data) }.value
+        guard projects.contains(where: { $0.id == id }) else { return }
+        states[id, default: ProjectState()].board = board
+        states[id]?.snapshot = snapshot
+    }
+
+    // MARK: - Detail
+
     func detail(_ issueID: String, project id: UUID) async throws -> IssueDetail? {
-        guard let env, case let .loaded(_, snapshot) = state(of: id) else { return nil }
+        guard let env, let snapshot = state(of: id).snapshot else { return nil }
         return try await BeadsReader(dolt: DoltClient(env: env)).detail(issueID: issueID, snapshot: snapshot)
     }
 
-    func whoAmI(host: String, keyPath: String?) async -> String {
-        guard let env else { return "—" }
-        do { return try await SSHProbe(env: env).account(host: host, identity: SSHIdentity(privateKeyPath: keyPath)) }
-        catch { return "\(error)" }
-    }
+    // MARK: - Persistence
 
     private func update(_ id: UUID, _ change: (inout Project) -> Void) {
         guard let i = projects.firstIndex(where: { $0.id == id }) else { return }
@@ -110,4 +149,10 @@ final class AppModel {
     }
 
     private func save() throws { try projectsFile?.save(projects) }
+}
+
+private extension Result where Failure == Error {
+    init(catching body: () async throws -> Success) async {
+        do { self = .success(try await body()) } catch { self = .failure(error) }
+    }
 }
