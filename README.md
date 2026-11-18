@@ -17,6 +17,15 @@ xcodegen generate                # BeadsDesktop.xcodeproj (generated, gitignored
 open BeadsDesktop.xcodeproj      # or: xcodebuild -scheme BeadsDesktop -derivedDataPath build/DerivedData build
 ```
 
+## Signing (needed for notifications)
+
+Builds are ad-hoc signed by default. macOS doesn't list ad-hoc apps in System Settings → Notifications and denies them,
+so for notifications sign with an Apple Development certificate (free Apple ID is enough):
+
+1. Xcode → Settings → Accounts → add your Apple ID → Manage Certificates → **+ Apple Development**.
+2. `cp Config/Signing.example.xcconfig Config/Signing.xcconfig` and put your Team ID there.
+3. `xcodegen generate` and rebuild.
+
 ## Tests
 
 ```sh

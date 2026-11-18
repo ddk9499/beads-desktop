@@ -56,7 +56,8 @@ public actor SyncService {
         let snapshot = try await store.materialize(commit: fetched, git: git)
         let data = try await reader.read(snapshot: snapshot, commit: fetched)
 
-        store.removeSnapshots(except: fetched)
+        // Keep the previous snapshot one more round: the UI may still be reading it (issue detail queries).
+        store.removeSnapshots(except: Set([fetched, project.lastCommit].compactMap { $0 }))
         await git.prune(store.bareRepo)
         return .updated(data, snapshot: snapshot)
     }

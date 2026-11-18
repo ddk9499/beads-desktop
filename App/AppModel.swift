@@ -20,6 +20,27 @@ final class AppModel {
 
     private(set) var projects: [Project] = []
     private(set) var states: [UUID: ProjectState] = [:]
+    /// Issues changed by recent refreshes, per project: issue id → (what, when). Drives card highlights.
+    private(set) var recentChanges: [UUID: [String: RecentChange]] = [:]
+    /// Set when something (a notification click) asks to show a project/issue; views consume and clear it.
+    var focusRequest: FocusRequest?
+
+    struct RecentChange: Hashable {
+        let kind: IssueChange.Kind
+        let at: Date
+    }
+
+    struct FocusRequest: Equatable {
+        let project: UUID
+        let issue: String?
+    }
+
+    /// How long a changed card stays highlighted.
+    static let highlightDuration: TimeInterval = 10 * 60
+
+    private var pollTask: Task<Void, Never>?
+    private var failures: [UUID: Int] = [:]
+    private var nextAttempt: [UUID: Date] = [:]
     private(set) var toolStatus: String = "Checking tools…"
     private(set) var setupError: String?
 
@@ -52,8 +73,62 @@ final class AppModel {
             toolStatus = "Setup failed"
             return
         }
+        Notifier.shared.onOpen = { [weak self] project, issue in self?.focusRequest = FocusRequest(project: project, issue: issue) }
+        Task { await Notifier.shared.requestAuthorizationIfNeeded() }
         await withTaskGroup(of: Void.self) { group in
             for project in projects { group.addTask { await self.loadCachedThenSync(project.id) } }
+        }
+        startPolling()
+    }
+
+    // MARK: - Polling
+
+    /// Poll interval in seconds from Settings; 0 = off.
+    static var pollInterval: TimeInterval {
+        let value = UserDefaults.standard.object(forKey: SettingsKeys.pollSeconds) as? Double ?? 30
+        return value
+    }
+
+    func startPolling() {
+        pollTask?.cancel()
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let interval = AppModel.pollInterval
+                try? await Task.sleep(for: .seconds(interval > 0 ? min(interval, 15) : 15))
+                guard let self, interval > 0 else { continue }
+                await self.syncDue(olderThan: interval)
+            }
+        }
+    }
+
+    /// Syncs projects whose last sync is older than `age` and that aren't in failure backoff.
+    func syncDue(olderThan age: TimeInterval) async {
+        let now = Date.now
+        let due = projects.filter { p in
+            !state(of: p.id).isSyncing
+                && (nextAttempt[p.id].map { $0 <= now } ?? true)
+                && (p.lastSyncAt.map { now.timeIntervalSince($0) >= age - 1 } ?? true)
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for project in due { group.addTask { await self.sync(project.id) } }
+        }
+    }
+
+    /// Called when the app comes to the front: refresh anything not synced in the last few seconds.
+    func appDidBecomeActive() {
+        Task { await syncDue(olderThan: 10) }
+    }
+
+    /// Exponential backoff after failures: interval × 2^n, capped at 10 minutes.
+    private func recordResult(_ id: UUID, success: Bool) {
+        if success {
+            failures[id] = nil
+            nextAttempt[id] = nil
+        } else {
+            let n = (failures[id] ?? 0) + 1
+            failures[id] = n
+            let base = max(AppModel.pollInterval, 30)
+            nextAttempt[id] = .now.addingTimeInterval(min(base * pow(2, Double(n - 1)), 600))
         }
     }
 
@@ -76,6 +151,7 @@ final class AppModel {
     func removeProject(_ id: UUID) {
         projects.removeAll { $0.id == id }
         states[id] = nil
+        recentChanges[id] = nil
         try? save()
         if let env { try? FileManager.default.removeItem(at: env.paths.projectDir(id)) }
     }
@@ -116,14 +192,37 @@ final class AppModel {
                     await apply(data, snapshot: url, to: id)
                 }
             case let .updated(data, snapshot):
+                let previous = state(of: id).board
                 await apply(data, snapshot: snapshot, to: id)
                 update(id) { $0.lastCommit = data.commit }
+                if let previous, let current = state(of: id).board {
+                    noteChanges(ChangeDetector.changes(from: previous, to: current), project: id)
+                }
             }
             update(id) { $0.lastSyncAt = .now }
             states[id]?.error = nil
+            recordResult(id, success: true)
         } catch {
             states[id, default: ProjectState()].error = "\(error)"
+            recordResult(id, success: false)
         }
+    }
+
+    private func noteChanges(_ changes: [IssueChange], project id: UUID) {
+        guard !changes.isEmpty else { return }
+        let now = Date.now
+        var recent = (recentChanges[id] ?? [:]).filter { now.timeIntervalSince($0.value.at) < Self.highlightDuration }
+        for change in changes where recent[change.issue.id] == nil || change.kind != .reassigned {
+            recent[change.issue.id] = RecentChange(kind: change.kind, at: now)
+        }
+        recentChanges[id] = recent
+        if let project = project(id) { Notifier.shared.post(changes, project: project) }
+    }
+
+    func recentChange(_ issueID: String, in project: UUID) -> RecentChange? {
+        guard let change = recentChanges[project]?[issueID],
+              Date.now.timeIntervalSince(change.at) < Self.highlightDuration else { return nil }
+        return change
     }
 
     private func apply(_ data: BeadsData, snapshot: URL, to id: UUID) async {

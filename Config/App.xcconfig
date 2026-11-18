@@ -20,5 +20,8 @@ INFOPLIST_KEY_NSHumanReadableCopyright =
 ENABLE_APP_SANDBOX = NO
 ENABLE_HARDENED_RUNTIME = YES
 CODE_SIGN_STYLE = Automatic
+// Ad-hoc by default. A stable identity (Apple Development) is needed for notifications to be allowed:
+// put DEVELOPMENT_TEAM / CODE_SIGN_IDENTITY into Config/Signing.xcconfig (gitignored, see Signing.example.xcconfig).
 CODE_SIGN_IDENTITY = -
+#include? "Signing.xcconfig"
 ENABLE_USER_SCRIPT_SANDBOXING = NO

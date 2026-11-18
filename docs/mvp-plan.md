@@ -156,5 +156,21 @@ Found while building M1 (all fixed):
 - Epics: open before closed, then priority; progress = closed ÷ children; expandable children; hide closed.
 - Note: window snapshots (`-debugSnapshot`) render the Epics view blank (cause unknown; the live view works).
 
-Next: M4 (polling + notifications of changes), M5 (graph), M6 (signing/notarization/release).
+**M4 ✅** (2026-11-18):
+- Polling: `ls-remote` every 30 s by default (Settings: 15 s / 30 s / 1 min / 5 min / manual), plus on app activation
+  and ⌘R. Failing projects back off exponentially (up to 10 min). Measured: an agent's `bd dolt push` showed up in
+  the app **9 s** later (target ≤ 45 s).
+- The model starts from the app delegate, not from a window: refresh and notifications keep working with the window
+  closed (found when macOS relaunched the app without a window and nothing synced).
+- Change detection between snapshots (`ChangeDetector`): created, closed, reopened, unblocked, became blocked,
+  moved columns, reassigned. Changed cards get a tag + accent border for 10 minutes.
+- macOS notifications per change kind (default: closed, unblocked); > 4 changes → one summary notification;
+  clicking opens the project and the issue; no banners while the app is in front.
+- Previous snapshot is kept one extra round, fixing the detail-read race noted in M2.
+- Signing: ad-hoc builds are denied notifications and aren't listed in System Settings. Builds are now signed with an
+  Apple Development identity via a gitignored `Config/Signing.xcconfig` (see README → Signing). This machine also
+  needed the Apple WWDR G3 intermediate in the login keychain (only the expired 2023 WWDR was present).
+  Verified end to end: agent push → notification in ~14 s → click opens the issue.
+
+Next: M5 (graph), M6 (signing/notarization/release).
 Known gap: snapshot cleanup can race a detail read of the previous snapshot (rare; retry on failure in M4).

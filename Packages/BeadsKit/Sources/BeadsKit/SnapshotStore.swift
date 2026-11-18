@@ -52,12 +52,12 @@ public struct SnapshotStore: Sendable {
         return target
     }
 
-    /// Removes every snapshot except `keep` (and stale staging dirs).
-    public func removeSnapshots(except keep: String) {
+    /// Removes every snapshot not in `keep` (and stale staging dirs).
+    public func removeSnapshots(except keep: Set<String>) {
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(at: snapshotsDir, includingPropertiesForKeys: nil,
                                                       options: []) else { return }
-        for item in items where item.lastPathComponent != keep {
+        for item in items where !keep.contains(item.lastPathComponent) {
             try? fm.removeItem(at: item)
         }
     }

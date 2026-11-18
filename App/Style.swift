@@ -96,3 +96,34 @@ enum SettingsKeys {
 extension Date {
     var relative: String { formatted(.relative(presentation: .named)) }
 }
+
+extension EnvironmentValues {
+    /// Issues changed by recent refreshes in the current project (issue id → change).
+    @Entry var recentChanges: [String: AppModel.RecentChange] = [:]
+}
+
+/// Small "what just changed" tag for cards changed by a recent refresh.
+struct ChangeTag: View {
+    let change: AppModel.RecentChange
+
+    var body: some View {
+        Text(label)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(Color.accentColor.opacity(0.18), in: .capsule)
+            .foregroundStyle(Color.accentColor)
+            .help("Changed \(change.at.relative)")
+    }
+
+    private var label: String {
+        switch change.kind {
+        case .created: "new"
+        case .closed: "closed"
+        case .reopened: "reopened"
+        case .unblocked: "unblocked"
+        case .becameBlocked: "blocked"
+        case .moved: "moved"
+        case .reassigned: "reassigned"
+        }
+    }
+}

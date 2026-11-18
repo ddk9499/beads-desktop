@@ -85,7 +85,14 @@ struct ProjectView: View {
                 }
             }
         }
+        .environment(\.recentChanges, model.recentChanges[projectID] ?? [:])
         .onChange(of: projectID) { selection = nil }
+        .onChange(of: model.focusRequest, initial: true) {
+            // A notification click for this project: open the issue.
+            guard let request = model.focusRequest, request.project == projectID else { return }
+            if let issue = request.issue { selection = issue }
+            model.focusRequest = nil
+        }
         #if DEBUG
         // Debug-only: `-debugSelectIssue <id>` opens an issue in the inspector at launch.
         .onChange(of: state.board?.data.commit, initial: true) {

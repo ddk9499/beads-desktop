@@ -148,6 +148,13 @@ struct CardView: View {
     let issue: Issue
     let board: BoardIndex
     let isSelected: Bool
+    @Environment(\.recentChanges) private var recentChanges
+
+    private var recent: AppModel.RecentChange? {
+        guard let change = recentChanges[issue.id],
+              Date.now.timeIntervalSince(change.at) < AppModel.highlightDuration else { return nil }
+        return change
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -157,6 +164,7 @@ struct CardView: View {
                     .help(issue.issueType)
                 Text(issue.id).font(.caption.monospaced()).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
+                if let recent { ChangeTag(change: recent) }
                 OriginMark(name: issue.createdBy)
                 PriorityBadge(priority: issue.priority)
             }
@@ -197,7 +205,8 @@ struct CardView: View {
         .background(.background, in: .rect(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: isSelected ? 2 : 1)
+                .strokeBorder(isSelected ? Color.accentColor : recent != nil ? Color.accentColor.opacity(0.6) : Color.primary.opacity(0.08),
+                              lineWidth: isSelected ? 2 : 1)
         }
         .contentShape(.rect)
         .opacity(issue.status == "closed" ? 0.75 : 1)
