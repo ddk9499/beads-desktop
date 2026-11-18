@@ -172,5 +172,16 @@ Found while building M1 (all fixed):
   needed the Apple WWDR G3 intermediate in the login keychain (only the expired 2023 WWDR was present).
   Verified end to end: agent push → notification in ~14 s → click opens the issue.
 
-Next: M5 (graph), M6 (signing/notarization/release).
+**M5 ✅** (2026-11-18):
+- Graph view (⌘5) in a WKWebView with Cytoscape.js 3.34.4 + cytoscape-dagre 4.0.1 (MIT, vendored in
+  `Resources/Graph/vendor`, no build step), left-to-right dagre layout.
+- Scopes (Scotty's rules, `GraphScope` in BeadsKit with tests): an epic = epic + recursive descendants + one hop of
+  external links; an issue = full chains of active blockers upstream and dependents downstream + parent/children as
+  context. Capped at 400 nodes. "Show in Graph" button in the issue inspector.
+- Nodes: border in the board-column color, dashed = context outside the scope, faded = closed, anchor/selection
+  highlighted; edges: blocking red arrows, parent→child dashed, other links dotted. Click a node → inspector.
+- The page is local only: CSP `default-src 'none'`, navigation limited to the bundled page, data passed as a
+  `callAsyncJavaScript` argument, labels drawn on canvas (no HTML from the repo).
+
+Next: M6 (Developer ID signing, notarization, release) — needs a paid Apple Developer Program membership.
 Known gap: snapshot cleanup can race a detail read of the previous snapshot (rare; retry on failure in M4).

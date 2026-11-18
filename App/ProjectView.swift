@@ -2,7 +2,7 @@ import BeadsKit
 import SwiftUI
 
 enum ProjectMode: String, CaseIterable, Identifiable {
-    case board, list, epics, focus
+    case board, list, epics, focus, graph
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -10,6 +10,7 @@ enum ProjectMode: String, CaseIterable, Identifiable {
         case .list: "List"
         case .epics: "Epics"
         case .focus: "Focus"
+        case .graph: "Graph"
         }
     }
     var symbol: String {
@@ -18,6 +19,7 @@ enum ProjectMode: String, CaseIterable, Identifiable {
         case .list: "list.bullet"
         case .epics: "square.stack.3d.up"
         case .focus: "scope"
+        case .graph: "point.3.connected.trianglepath.dotted"
         }
     }
     var shortcut: KeyEquivalent { KeyEquivalent(Character("\(Self.allCases.firstIndex(of: self)! + 1)")) }
@@ -29,6 +31,7 @@ struct ProjectView: View {
     let projectID: UUID
     @State private var selection: String?
     @State private var filter = IssueFilter()
+    @State private var graphAnchor: GraphAnchor?
     @SceneStorage("projectMode") private var mode: ProjectMode = .board
     @AppStorage(SettingsKeys.humanNames) private var humanNames = ""
 
@@ -125,6 +128,7 @@ struct ProjectView: View {
         case .list: IssueListView(board: board, issues: issues, selection: $selection)
         case .epics: EpicsView(board: board, issues: issues, selection: $selection)
         case .focus: FocusView(board: board, issues: issues, selection: $selection)
+        case .graph: GraphModeView(board: board, issues: issues, selection: $selection, anchor: $graphAnchor)
         }
     }
 
@@ -137,7 +141,8 @@ struct ProjectView: View {
                 content(board, issues)
                 if let id = selection, let issue = board.issuesByID[id] {
                     Divider()
-                    IssueDetailView(projectID: projectID, issue: issue, board: board, selection: $selection)
+                    IssueDetailView(projectID: projectID, issue: issue, board: board, selection: $selection,
+                                    showInGraph: { id in graphAnchor = board.issuesByID[id]?.issueType == "epic" ? .epic(id) : .issue(id); mode = .graph })
                         .frame(width: 420)
                 }
             }
@@ -153,7 +158,8 @@ struct ProjectView: View {
         content(board, issues)
             .inspector(isPresented: inspectorShown(board)) {
                 if let id = selection, let issue = board.issuesByID[id] {
-                    IssueDetailView(projectID: projectID, issue: issue, board: board, selection: $selection)
+                    IssueDetailView(projectID: projectID, issue: issue, board: board, selection: $selection,
+                                    showInGraph: { id in graphAnchor = board.issuesByID[id]?.issueType == "epic" ? .epic(id) : .issue(id); mode = .graph })
                         .inspectorColumnWidth(min: 320, ideal: 400, max: 640)
                 }
             }

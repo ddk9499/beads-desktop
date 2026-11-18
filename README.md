@@ -57,4 +57,6 @@ build/DerivedData/Build/Products/Debug/BeadsDesktop.app/Contents/MacOS/BeadsDesk
   -debugSelectProject gastownhall/beads -debugSelectIssue bd-7vb13 -debugPlainDetail YES \
   -debugSnapshot /tmp/shot.png -debugSnapshotDelay 8
 ```
-Writes a PNG of the main window and quits; no screen-recording permission needed.
+Writes a PNG of the main window and quits; no screen-recording permission needed. Launch via
+`open <app> --args …` (a directly started binary may get no window). In Graph mode (`-debugMode graph`)
+`-debugGraphSnapshot <png>` also captures the web view.

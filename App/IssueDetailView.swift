@@ -9,6 +9,7 @@ struct IssueDetailView: View {
     let issue: Issue
     let board: BoardIndex
     @Binding var selection: String?
+    var showInGraph: ((String) -> Void)?
 
     @State private var detail: IssueDetail?
     @State private var loadError: String?
@@ -49,9 +50,19 @@ struct IssueDetailView: View {
                     .help("Close details (Esc)")
             }
             Text(issue.title).font(.title3.weight(.semibold)).textSelection(.enabled)
-            if let column = board.columns[issue.id] {
-                Label(column.title, systemImage: Style.columnSymbol(column))
-                    .font(.caption).foregroundStyle(Style.columnColor(column))
+            HStack {
+                if let column = board.columns[issue.id] {
+                    Label(column.title, systemImage: Style.columnSymbol(column))
+                        .font(.caption).foregroundStyle(Style.columnColor(column))
+                }
+                Spacer()
+                if let showInGraph {
+                    Button { showInGraph(issue.id) } label: {
+                        Label("Show in Graph", systemImage: "point.3.connected.trianglepath.dotted")
+                    }
+                    .buttonStyle(.link).font(.caption)
+                    .help(issue.issueType == "epic" ? "Show this epic's graph" : "Show blockers and dependents")
+                }
             }
         }
     }

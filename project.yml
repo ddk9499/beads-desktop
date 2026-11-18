@@ -15,6 +15,9 @@ targets:
       Release: Config/App.xcconfig
     sources:
       - App
+      - path: Resources/Graph
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: BeadsKit
     postBuildScripts:

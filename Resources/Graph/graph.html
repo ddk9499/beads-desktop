@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Local only: no network, no inline scripts. Data arrives via callAsyncJavaScript arguments. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:">
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
+               font: 12px -apple-system, system-ui, sans-serif; }
+  #cy { position: absolute; inset: 0; }
+  #empty { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+           color: #8e8e93; font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="cy"></div>
+<div id="empty">Nothing to show</div>
+<script src="vendor/cytoscape.min.js"></script>
+<script src="vendor/cytoscape-dagre.min.js"></script>
+<script src="graph.js"></script>
+</body>
+</html>
