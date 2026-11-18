@@ -1,0 +1,33 @@
+name: BeadsDesktop
+options:
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+packages:
+  BeadsKit:
+    path: Packages/BeadsKit
+targets:
+  BeadsDesktop:
+    type: application
+    platform: macOS
+    configFiles:
+      Debug: Config/App.xcconfig
+      Release: Config/App.xcconfig
+    sources:
+      - App
+    dependencies:
+      - package: BeadsKit
+    postBuildScripts:
+      - name: Embed dolt
+        script: "\"${SRCROOT}/scripts/embed-dolt.sh\""
+        inputFiles:
+          - $(SRCROOT)/Vendor/dolt/dolt
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/dolt
+schemes:
+  BeadsDesktop:
+    build:
+      targets:
+        BeadsDesktop: all
+    test:
+      targets: []
