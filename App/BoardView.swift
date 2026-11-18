@@ -4,22 +4,30 @@ import SwiftUI
 /// Kanban board: Backlog · Ready · In Progress · Blocked · Done (read-only).
 struct BoardView: View {
     let board: BoardIndex
+    /// Issues after filters/search; columns come from `board.columns`.
+    let issues: [Issue]
     @Binding var selection: String?
     @AppStorage(SettingsKeys.doneWindowDays) private var doneWindowDays = 14
     @AppStorage(SettingsKeys.boardSort) private var sort: BoardSort = .priority
 
     var body: some View {
-        let columns = visibleColumns
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 12) {
-                ForEach(columns, id: \.column) { entry in
-                    ColumnView(column: entry.column, issues: entry.issues, hiddenCount: entry.hidden,
-                               board: board, selection: $selection, doneWindowDays: $doneWindowDays)
+                ForEach(visibleColumns, id: \.column) { entry in
+                    IssueColumn(title: entry.column.title, symbol: Style.columnSymbol(entry.column),
+                                color: Style.columnColor(entry.column), issues: entry.issues,
+                                board: board, selection: $selection) {
+                        if entry.column == .done { doneWindowMenu }
+                    } footer: {
+                        if entry.hidden > 0 {
+                            Button("\(entry.hidden) older — show all") { doneWindowDays = 0 }
+                                .buttonStyle(.link).font(.caption).padding(.vertical, 6)
+                        }
+                    }
                 }
             }
             .padding(12)
         }
-        .scrollIndicators(.automatic)
         .toolbar {
             ToolbarItem {
                 Picker("Sort", selection: $sort) {
@@ -30,11 +38,29 @@ struct BoardView: View {
         }
     }
 
+    private var doneWindowMenu: some View {
+        Menu {
+            Picker("Closed within", selection: $doneWindowDays) {
+                Text("7 days").tag(7)
+                Text("14 days").tag(14)
+                Text("30 days").tag(30)
+                Text("All").tag(0)
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Text(doneWindowDays == 0 ? "All" : "\(doneWindowDays)d").font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Show issues closed within…")
+    }
+
     private struct Entry { let column: BoardColumn; let issues: [Issue]; let hidden: Int }
 
     private var visibleColumns: [Entry] {
-        BoardColumn.allCases.compactMap { column in
-            var issues = board.issues(in: column)
+        let byColumn = Dictionary(grouping: issues.filter { board.columns[$0.id] != nil }) { board.columns[$0.id]! }
+        return BoardColumn.allCases.compactMap { column in
+            var issues = byColumn[column] ?? []
             var hidden = 0
             if column == .done, doneWindowDays > 0 {
                 let cutoff = Calendar.current.date(byAdding: .day, value: -doneWindowDays, to: .now) ?? .distantPast
@@ -52,65 +78,69 @@ struct BoardView: View {
     }
 }
 
-private struct ColumnView: View {
-    let column: BoardColumn
+/// A titled column of cards, used by the Board and Focus views.
+struct IssueColumn<Accessory: View, Footer: View>: View {
+    let title: String
+    let symbol: String
+    let color: Color
+    var hint: String?
     let issues: [Issue]
-    let hiddenCount: Int
     let board: BoardIndex
     @Binding var selection: String?
-    @Binding var doneWindowDays: Int
+    /// `false` when the column sits inside an outer scroll view (grouped Focus).
+    var scrolls = true
+    var width: CGFloat = 290
+    @ViewBuilder var accessory: () -> Accessory
+    @ViewBuilder var footer: () -> Footer
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(issues) { issue in
-                        CardView(issue: issue, board: board, isSelected: selection == issue.id)
-                            .onTapGesture { selection = selection == issue.id ? nil : issue.id }
-                            .id(issue.id)
-                    }
-                    if issues.isEmpty {
-                        Text("No issues").font(.caption).foregroundStyle(.tertiary).padding(.top, 24)
-                    }
-                    if hiddenCount > 0 {
-                        Button("\(hiddenCount) older — show all") { doneWindowDays = 0 }
-                            .buttonStyle(.link).font(.caption).padding(.vertical, 6)
-                    }
-                }
-                .padding(8)
+            if scrolls {
+                ScrollView { cards }
+            } else {
+                cards
             }
         }
-        .frame(width: 290)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(width: width)
+        .frame(maxHeight: scrolls ? .infinity : nil, alignment: .top)
         .background(.background.secondary, in: .rect(cornerRadius: 10))
+    }
+
+    private var cards: some View {
+        LazyVStack(spacing: 8) {
+            ForEach(issues) { issue in
+                CardView(issue: issue, board: board, isSelected: selection == issue.id)
+                    .onTapGesture { selection = selection == issue.id ? nil : issue.id }
+                    .id(issue.id)
+            }
+            if issues.isEmpty {
+                Text("No issues").font(.caption).foregroundStyle(.tertiary).padding(.vertical, 16)
+            }
+            footer()
+        }
+        .padding(8)
     }
 
     private var header: some View {
         HStack(spacing: 6) {
-            Image(systemName: Style.columnSymbol(column)).foregroundStyle(Style.columnColor(column))
-            Text(column.title).font(.headline)
+            Image(systemName: symbol).foregroundStyle(color)
+            Text(title).font(.headline)
             Text("\(issues.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             Spacer()
-            if column == .done {
-                Menu {
-                    Picker("Closed within", selection: $doneWindowDays) {
-                        Text("7 days").tag(7)
-                        Text("14 days").tag(14)
-                        Text("30 days").tag(30)
-                        Text("All").tag(0)
-                    }
-                    .pickerStyle(.inline)
-                } label: {
-                    Text(doneWindowDays == 0 ? "All" : "\(doneWindowDays)d").font(.caption)
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Show issues closed within…")
-            }
+            accessory()
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
+        .help(hint ?? "")
+    }
+}
+
+extension IssueColumn where Accessory == EmptyView, Footer == EmptyView {
+    init(title: String, symbol: String, color: Color, hint: String? = nil, issues: [Issue], board: BoardIndex,
+         selection: Binding<String?>, scrolls: Bool = true, width: CGFloat = 290) {
+        self.init(title: title, symbol: symbol, color: color, hint: hint, issues: issues, board: board,
+                  selection: selection, scrolls: scrolls, width: width, accessory: { EmptyView() }, footer: { EmptyView() })
     }
 }
 

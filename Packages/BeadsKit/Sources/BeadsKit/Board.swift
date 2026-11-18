@@ -166,7 +166,7 @@ public enum BoardSort: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// Who created a bead. beads has no human/agent flag; anyone on the user's allowlist is a human (Scotty's rule).
-public enum Origin: Sendable {
+public enum Origin: Sendable, Comparable {
     case human, agent
 
     public static func of(_ name: String?, humans: Set<String>) -> Origin {

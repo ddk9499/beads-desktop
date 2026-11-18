@@ -146,5 +146,15 @@ Found while building M1 (all fixed):
 - Debug-only launch flags for UI checks: `-debugSelectProject owner/repo -debugSelectIssue <id> -debugPlainDetail YES
   -debugSnapshot <png>` (window snapshots can't render the Liquid Glass inspector, hence the plain-detail mode).
 
-Next: M3 (Epics, Focus, filters/search), M4 (polling + notifications of changes).
+**M3 ✅** (2026-11-18):
+- Views: Board ⌘1 · List ⌘2 · Epics ⌘3 · Focus ⌘4.
+- Filters (Scotty's `lib/filters.ts` semantics): status, type, priority, origin, assignee (incl. Unassigned), label;
+  OR within a facet, AND across; `archived` hidden by default. Search over id/title/assignee/labels. Active filters
+  shown as removable chips. Applies to all views.
+- Focus: In flight (in_progress/hooked) · Blocked · Next up (open P0/P1, not blocked) · optional Recently finished
+  (last 7 closed); optional grouping by assignee (active people first).
+- Epics: open before closed, then priority; progress = closed ÷ children; expandable children; hide closed.
+- Note: window snapshots (`-debugSnapshot`) render the Epics view blank (cause unknown; the live view works).
+
+Next: M4 (polling + notifications of changes), M5 (graph), M6 (signing/notarization/release).
 Known gap: snapshot cleanup can race a detail read of the previous snapshot (rare; retry on failure in M4).

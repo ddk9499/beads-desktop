@@ -10,7 +10,12 @@ enum DebugSnapshot {
         let delay = defaults.double(forKey: "debugSnapshotDelay")
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(delay > 0 ? delay : 8))
-            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }),
+            for w in NSApp.windows {
+                FileHandle.standardError.write(Data("window \(type(of: w)) visible=\(w.isVisible) frame=\(w.frame) title=\(w.title)\n".utf8))
+            }
+            // The main window is the largest visible one (sheets/panels/popovers are smaller).
+            guard let window = NSApp.windows.filter({ $0.isVisible && $0.contentView != nil })
+                    .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }),
                   let view = window.contentView?.superview ?? window.contentView,
                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
             view.cacheDisplay(in: view.bounds, to: rep)

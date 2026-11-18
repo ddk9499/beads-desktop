@@ -2,25 +2,47 @@ import BeadsKit
 import SwiftUI
 
 enum ProjectMode: String, CaseIterable, Identifiable {
-    case board, list
+    case board, list, epics, focus
     var id: String { rawValue }
-    var title: String { self == .board ? "Board" : "List" }
-    var symbol: String { self == .board ? "rectangle.split.3x1" : "list.bullet" }
+    var title: String {
+        switch self {
+        case .board: "Board"
+        case .list: "List"
+        case .epics: "Epics"
+        case .focus: "Focus"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .board: "rectangle.split.3x1"
+        case .list: "list.bullet"
+        case .epics: "square.stack.3d.up"
+        case .focus: "scope"
+        }
+    }
+    var shortcut: KeyEquivalent { KeyEquivalent(Character("\(Self.allCases.firstIndex(of: self)! + 1)")) }
 }
 
-/// Detail column for a selected project: board or list + inspector.
+/// Detail column for a selected project: Board / List / Epics / Focus + filters + inspector.
 struct ProjectView: View {
     @Environment(AppModel.self) private var model
     let projectID: UUID
     @State private var selection: String?
+    @State private var filter = IssueFilter()
     @SceneStorage("projectMode") private var mode: ProjectMode = .board
+    @AppStorage(SettingsKeys.humanNames) private var humanNames = ""
 
     var body: some View {
         let state = model.state(of: projectID)
         Group {
             if let board = state.board {
-                withDetail(board)
+                let issues = board.filtered(filter, humans: SettingsKeys.parse(humanNames))
+                withDetail(board, issues)
                     .navigationSubtitle(subtitle(board, state))
+                    .searchable(text: $filter.search, placement: .toolbar, prompt: "ID, title, assignee, label")
+                    .toolbar {
+                        ToolbarItem { FilterMenu(filter: $filter, board: board) }
+                    }
             } else if let error = state.error {
                 ContentUnavailableView {
                     Label("Sync failed", systemImage: "exclamationmark.triangle")
@@ -34,15 +56,18 @@ struct ProjectView: View {
             }
         }
         .navigationTitle(model.project(projectID)?.displayName ?? "")
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if state.board != nil, let error = state.error { ErrorBanner(message: error) }
-        }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("View", selection: $mode) {
                     ForEach(ProjectMode.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .background {
+                    // ⌘1…⌘4 switch views.
+                    ForEach(ProjectMode.allCases) { m in
+                        Button(m.title) { mode = m }.keyboardShortcut(m.shortcut, modifiers: .command).hidden()
+                    }
+                }
             }
             ToolbarItem {
                 Button { Task { await model.sync(projectID) } } label: {
@@ -64,25 +89,45 @@ struct ProjectView: View {
         #if DEBUG
         // Debug-only: `-debugSelectIssue <id>` opens an issue in the inspector at launch.
         .onChange(of: state.board?.data.commit, initial: true) {
-            if selection == nil, let id = UserDefaults.standard.string(forKey: "debugSelectIssue") { selection = id }
+            let defaults = UserDefaults.standard
+            if selection == nil, let id = defaults.string(forKey: "debugSelectIssue") { selection = id }
+            if let raw = defaults.string(forKey: "debugMode"), let m = ProjectMode(rawValue: raw) { mode = m }
+            if filter.search.isEmpty, let q = defaults.string(forKey: "debugSearch") { filter.search = q }
+            for p in (defaults.string(forKey: "debugPriorities") ?? "").split(separator: ",").compactMap({ Int($0) }) {
+                filter.priorities.insert(p)
+            }
         }
         #endif
     }
 
-    @ViewBuilder private func content(_ board: BoardIndex) -> some View {
-        switch mode {
-        case .board: BoardView(board: board, selection: $selection)
-        case .list: IssueListView(board: board, selection: $selection)
+    /// Banners stacked above the view. (A safeAreaInset would slide under horizontal scroll views.)
+    private func content(_ board: BoardIndex, _ issues: [Issue]) -> some View {
+        VStack(spacing: 0) {
+            if let error = model.state(of: projectID).error { ErrorBanner(message: error) }
+            if filter.activeCount > 0 || filter.showArchived {
+                ActiveFiltersBar(filter: $filter, shown: issues.count, total: board.data.issues.count)
+                Divider()
+            }
+            modeView(board, issues).frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    @ViewBuilder private func withDetail(_ board: BoardIndex) -> some View {
+    @ViewBuilder private func modeView(_ board: BoardIndex, _ issues: [Issue]) -> some View {
+        switch mode {
+        case .board: BoardView(board: board, issues: issues, selection: $selection)
+        case .list: IssueListView(board: board, issues: issues, selection: $selection)
+        case .epics: EpicsView(board: board, issues: issues, selection: $selection)
+        case .focus: FocusView(board: board, issues: issues, selection: $selection)
+        }
+    }
+
+    @ViewBuilder private func withDetail(_ board: BoardIndex, _ issues: [Issue]) -> some View {
         #if DEBUG
         // Debug-only: `-debugPlainDetail YES` shows the detail as a plain column (window snapshots can't
         // render the Liquid Glass inspector).
         if UserDefaults.standard.bool(forKey: "debugPlainDetail") {
             HStack(spacing: 0) {
-                content(board)
+                content(board, issues)
                 if let id = selection, let issue = board.issuesByID[id] {
                     Divider()
                     IssueDetailView(projectID: projectID, issue: issue, board: board, selection: $selection)
@@ -90,15 +135,15 @@ struct ProjectView: View {
                 }
             }
         } else {
-            inspectorLayout(board)
+            inspectorLayout(board, issues)
         }
         #else
-        inspectorLayout(board)
+        inspectorLayout(board, issues)
         #endif
     }
 
-    private func inspectorLayout(_ board: BoardIndex) -> some View {
-        content(board)
+    private func inspectorLayout(_ board: BoardIndex, _ issues: [Issue]) -> some View {
+        content(board, issues)
             .inspector(isPresented: inspectorShown(board)) {
                 if let id = selection, let issue = board.issuesByID[id] {
                     IssueDetailView(projectID: projectID, issue: issue, board: board, selection: $selection)
@@ -146,12 +191,13 @@ struct ErrorBanner: View {
 /// Flat table of all issues (the M1 view), grouped by board column order.
 struct IssueListView: View {
     let board: BoardIndex
+    let issues: [Issue]
     @Binding var selection: String?
     @State private var showClosed = false
     @State private var sortOrder = [KeyPathComparator(\Issue.priority)]
 
     var body: some View {
-        let rows = board.data.issues
+        let rows = issues
             .filter { showClosed || $0.status != "closed" }
             .sorted(using: sortOrder)
         Table(rows, selection: $selection, sortOrder: $sortOrder) {
