@@ -12,6 +12,8 @@ ARCHS = arm64
 SWIFT_VERSION = 6.0
 
 GENERATE_INFOPLIST_FILE = YES
+// Icon Composer file Resources/Icon/AppIcon.icon (layers: beads, headers, columns; concept "Bead Board").
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
 INFOPLIST_KEY_CFBundleDisplayName = $(APP_DISPLAY_NAME)
 INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.developer-tools
 INFOPLIST_KEY_NSHumanReadableCopyright =

@@ -1,0 +1,61 @@
+{
+  "fill": {
+    "automatic-gradient": "srgb:0.86275,0.87843,0.92549,1.00000"
+  },
+  "groups": [
+    {
+      "name": "Beads",
+      "layers": [
+        {
+          "name": "beads",
+          "image-name": "beads.svg",
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.3
+      }
+    },
+    {
+      "name": "Board",
+      "layers": [
+        {
+          "name": "headers",
+          "image-name": "headers.svg",
+          "glass": false
+        },
+        {
+          "name": "columns",
+          "image-name": "columns.svg",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.17255,0.18039,0.21176,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.35
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

@@ -18,6 +18,9 @@ targets:
       - path: Resources/Graph
         type: folder
         buildPhase: resources
+      - path: Resources/Icon/AppIcon.icon
+        type: file
+        buildPhase: resources
     dependencies:
       - package: BeadsKit
     postBuildScripts:
