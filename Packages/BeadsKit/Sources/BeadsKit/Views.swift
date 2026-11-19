@@ -59,18 +59,6 @@ extension BoardIndex {
         data.issues.filter { filter.matches($0, labels: labels[$0.id] ?? [], humans: humans) }
     }
 
-    /// Facet options are computed from ALL issues so picking one value doesn't make the others vanish.
-    public var statusOptions: [String] { Set(data.issues.map(\.status)).sorted() }
-    public var typeOptions: [String] { Set(data.issues.map(\.issueType)).sorted() }
-    public var labelOptions: [String] {
-        Set(data.labels.map(\.label)).subtracting([IssueFilter.archivedLabel]).sorted()
-    }
-    /// Sorted assignees, with `IssueFilter.unassigned` first when some issue has none.
-    public var assigneeOptions: [String] {
-        let keys = Set(data.issues.map(IssueFilter.assigneeKey))
-        let named = keys.subtracting([IssueFilter.unassigned]).sorted()
-        return keys.contains(IssueFilter.unassigned) ? [IssueFilter.unassigned] + named : named
-    }
 }
 
 // MARK: - Focus

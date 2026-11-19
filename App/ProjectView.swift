@@ -66,7 +66,7 @@ struct ProjectView: View {
                 }
                 .pickerStyle(.segmented)
                 .background {
-                    // ⌘1…⌘4 switch views.
+                    // ⌘1…⌘5 switch views.
                     ForEach(ProjectMode.allCases) { m in
                         Button(m.title) { mode = m }.keyboardShortcut(m.shortcut, modifiers: .command).hidden()
                     }
@@ -141,8 +141,7 @@ struct ProjectView: View {
                 content(board, issues)
                 if let id = selection, let issue = board.issuesByID[id] {
                     Divider()
-                    IssueDetailView(projectID: projectID, issue: issue, board: board, selection: $selection,
-                                    showInGraph: { id in graphAnchor = board.issuesByID[id]?.issueType == "epic" ? .epic(id) : .issue(id); mode = .graph })
+                    detailView(issue, board)
                         .frame(width: 420)
                 }
             }
@@ -158,11 +157,18 @@ struct ProjectView: View {
         content(board, issues)
             .inspector(isPresented: inspectorShown(board)) {
                 if let id = selection, let issue = board.issuesByID[id] {
-                    IssueDetailView(projectID: projectID, issue: issue, board: board, selection: $selection,
-                                    showInGraph: { id in graphAnchor = board.issuesByID[id]?.issueType == "epic" ? .epic(id) : .issue(id); mode = .graph })
+                    detailView(issue, board)
                         .inspectorColumnWidth(min: 320, ideal: 400, max: 640)
                 }
             }
+    }
+
+    private func detailView(_ issue: Issue, _ board: BoardIndex) -> IssueDetailView {
+        IssueDetailView(projectID: projectID, issue: issue, board: board, selection: $selection,
+                        showInGraph: { id in
+                            graphAnchor = board.issuesByID[id]?.issueType == "epic" ? .epic(id) : .issue(id)
+                            mode = .graph
+                        })
     }
 
     private func inspectorShown(_ board: BoardIndex) -> Binding<Bool> {
@@ -178,7 +184,7 @@ struct ProjectView: View {
         case let .olderThanTested(v): parts.append("schema \(v) is older than tested")
         }
         if state.isSyncing { parts.append("syncing…") }
-        else if let at = model.project(projectID)?.lastSyncAt { parts.append("synced \(at.relative)") }
+        else if let at = model.lastSync[projectID] { parts.append("synced \(at.relative)") }
         return parts.joined(separator: " · ")
     }
 }

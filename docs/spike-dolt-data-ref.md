@@ -1,7 +1,7 @@
 # Spike: reading beads data from a GitHub URL (refs/dolt/data)
 
 Date: 2026-11-18. Versions: beads (bd) v1.3.4, dolt v2.7.5, darwin arm64. All runs used an isolated `HOME`.
-Test repos: public `gastownhall/beads`, private `ddk9499/beads-spike-tmp` (temporary).
+Test repos: public `gastownhall/beads`, private test repo (temporary).
 
 ## TL;DR
 

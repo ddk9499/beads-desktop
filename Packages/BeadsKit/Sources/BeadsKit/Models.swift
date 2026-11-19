@@ -90,19 +90,24 @@ public struct BeadsData: Sendable {
     public let dependencies: [Dependency]
     public let labels: [Label]
     public let customStatuses: [CustomStatus]
-    /// From beads' own `ready_issues` / `blocked_issues` views.
-    public let readyIDs: Set<String>
-    public let blockedIDs: Set<String>
+    /// Which known beads tables exist (all verified to be base tables, not views).
+    public let tables: Set<String>
+    /// Rows that failed to decode and were skipped.
+    public let skippedRows: Int
 
-    public func children(of parentID: String) -> [String] {
-        dependencies.filter { $0.type == Dependency.parentChild && $0.dependsOnID == parentID }.map(\.issueID)
-    }
-
-    public func labels(of issueID: String) -> [String] {
-        labels.filter { $0.issueID == issueID }.map(\.label).sorted()
+    public init(commit: String, schemaVersion: Int, issues: [Issue], dependencies: [Dependency], labels: [Label],
+                customStatuses: [CustomStatus], tables: Set<String> = [], skippedRows: Int = 0) {
+        self.commit = commit
+        self.schemaVersion = schemaVersion
+        self.issues = issues
+        self.dependencies = dependencies
+        self.labels = labels
+        self.customStatuses = customStatuses
+        self.tables = tables
+        self.skippedRows = skippedRows
     }
 }
 
 extension Optional where Wrapped == String {
-    var nilIfEmpty: String? { self?.isEmpty == true ? nil : self }
+    var nilIfEmpty: String? { self.flatMap(\.nilIfEmpty) }
 }

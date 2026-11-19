@@ -89,8 +89,8 @@ Nice-to-have if there's time: menu bar extra with the Ready/Blocked counters; no
 | # | What | Done when |
 |---|---|---|
 | M0 | Xcode project, `dolt` in Resources (+ codesign of the nested binary), CLT git check | the app starts, `dolt version` from the bundle |
-| M1 | SyncService + Snapshot + BeadsReader without UI (unit/integration tests on `gastownhall/beads` and `beads-spike-tmp`) | test: URL → list of issues; repeat without changes = only ls-remote |
-| M2 | Add project + Sidebar + Board + Detail | I see `beads-spike-tmp` and `gastownhall/beads` on the board |
+| M1 | SyncService + Snapshot + BeadsReader without UI (unit/integration tests on `gastownhall/beads` and a private test repo) | test: URL → list of issues; repeat without changes = only ls-remote |
+| M2 | Add project + Sidebar + Board + Detail | I see a private test repo and `gastownhall/beads` on the board |
 | M3 | Epics + Focus + filters/search | parity with Scotty for reading |
 | M4 | Polling, focus refresh, error states, changes in the UI without flicker | the agent pushes → the card moves within ≤ 45 s |
 | M5 | Graph in WKWebView | the dependency graph for an epic |
@@ -113,7 +113,7 @@ Nice-to-have if there's time: menu bar extra with the Ready/Blocked counters; no
 
 **M0 ✅, M1 ✅.** Code: `project.yml`, `Config/App.xcconfig`, `App/`, `Packages/BeadsKit/`.
 - App builds clean (Xcode 26.6), bundle 114 MB, dolt embedded in `Contents/Helpers` with hardened runtime.
-- Verified headless: two projects (private `ddk9499/beads-spike-tmp`, public `gastownhall/beads`) synced on launch.
+- Verified headless: two projects (private test repo, public `gastownhall/beads`) synced on launch.
 - Tests: 20 (unit + integration over SSH). First sync of beads ~3 s, no-change sync ~0.86 s.
 
 Found while building M1 (all fixed):

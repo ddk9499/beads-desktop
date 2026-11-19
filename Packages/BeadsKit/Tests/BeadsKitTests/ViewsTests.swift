@@ -19,7 +19,7 @@ import Testing
 
     static func board(_ issues: [BeadsKit.Issue], labels: [Label] = [], deps: [Dependency] = []) -> BoardIndex {
         BoardIndex(BeadsData(commit: "c", schemaVersion: 66, issues: issues, dependencies: deps, labels: labels,
-                             customStatuses: [], readyIDs: [], blockedIDs: []))
+                             customStatuses: []))
     }
 
     // MARK: Filters

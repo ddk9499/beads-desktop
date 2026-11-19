@@ -31,6 +31,12 @@ public struct BoardIndex: Sendable {
     public let labels: [String: [String]]
     public let customCategories: [String: String]
     public let columns: [String: BoardColumn]
+    /// Filter facet options, computed once from ALL issues (so picking one value doesn't hide the others).
+    public let statusOptions: [String]
+    public let typeOptions: [String]
+    public let labelOptions: [String]
+    /// Sorted assignees, with `IssueFilter.unassigned` first when some issue has none.
+    public let assigneeOptions: [String]
 
     public init(_ data: BeadsData) {
         self.data = data
@@ -49,6 +55,13 @@ public struct BoardIndex: Sendable {
             }
         }
         self.columns = columns
+
+        statusOptions = Set(data.issues.map(\.status)).sorted()
+        typeOptions = Set(data.issues.map(\.issueType)).sorted()
+        labelOptions = Set(data.labels.map(\.label)).subtracting([IssueFilter.archivedLabel]).sorted()
+        let keys = Set(data.issues.map(IssueFilter.assigneeKey))
+        let named = keys.subtracting([IssueFilter.unassigned]).sorted()
+        assigneeOptions = keys.contains(IssueFilter.unassigned) ? [IssueFilter.unassigned] + named : named
     }
 
     // MARK: - Queries
@@ -56,9 +69,6 @@ public struct BoardIndex: Sendable {
     public func issues(in column: BoardColumn) -> [Issue] {
         data.issues.filter { columns[$0.id] == column }
     }
-
-    /// Issues whose status maps to no column (e.g. `pinned`, legacy statuses without a category).
-    public var unplacedCount: Int { data.issues.count - columns.count }
 
     /// Unresolved blockers worth naming on a card. `parent-child` is excluded: it points at the bead's own epic.
     public func blockers(of issue: Issue) -> [String] {

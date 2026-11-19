@@ -8,8 +8,17 @@ import UserNotifications
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
 
-    /// Called with (project id, issue id) when the user clicks a notification.
-    var onOpen: ((UUID, String?) -> Void)?
+    /// Called with (project id, issue id) when the user clicks a notification. A click that arrives before
+    /// the handler is set (the click launched the app) is kept and delivered when it is.
+    var onOpen: ((UUID, String?) -> Void)? {
+        didSet {
+            if let pending = pendingOpen, let onOpen {
+                pendingOpen = nil
+                onOpen(pending.0, pending.1)
+            }
+        }
+    }
+    private var pendingOpen: (UUID, String?)?
 
     /// Above this many changes in one refresh, a single summary notification is posted.
     static let summaryThreshold = 4
@@ -111,7 +120,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         let issue = info["issue"] as? String
         await MainActor.run {
             NSApplication.shared.activate()
-            onOpen?(projectID, issue)
+            if let onOpen { onOpen(projectID, issue) } else { pendingOpen = (projectID, issue) }
         }
     }
 }

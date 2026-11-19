@@ -18,13 +18,6 @@ final class AppModel {
         var data: Result<String?, Error>
     }
 
-    private(set) var projects: [Project] = []
-    private(set) var states: [UUID: ProjectState] = [:]
-    /// Issues changed by recent refreshes, per project: issue id → (what, when). Drives card highlights.
-    private(set) var recentChanges: [UUID: [String: RecentChange]] = [:]
-    /// Set when something (a notification click) asks to show a project/issue; views consume and clear it.
-    var focusRequest: FocusRequest?
-
     struct RecentChange: Hashable {
         let kind: IssueChange.Kind
         let at: Date
@@ -35,20 +28,40 @@ final class AppModel {
         let issue: String?
     }
 
+    private(set) var projects: [Project] = []
+    private(set) var states: [UUID: ProjectState] = [:]
+    /// Issues changed by recent refreshes, per project: issue id → (what, when). Drives card highlights.
+    private(set) var recentChanges: [UUID: [String: RecentChange]] = [:]
+    /// Set when something (a notification click) asks to show a project/issue; views consume and clear it.
+    var focusRequest: FocusRequest?
+    /// Fatal setup problem (no data folder / no bundled dolt): nothing can work.
+    private(set) var setupError: String?
+    /// Non-fatal: git or dolt failed their self-check; cached data is still shown.
+    private(set) var toolWarning: String?
+
     /// How long a changed card stays highlighted.
     static let highlightDuration: TimeInterval = 10 * 60
 
-    private var pollTask: Task<Void, Never>?
-    private var failures: [UUID: Int] = [:]
-    private var nextAttempt: [UUID: Date] = [:]
-    private(set) var toolStatus: String = "Checking tools…"
-    private(set) var setupError: String?
+    @ObservationIgnored private var scheduler = PollScheduler(interval: AppModel.pollInterval)
+    @ObservationIgnored private var pollTask: Task<Void, Never>?
+    /// One running sync per project; later callers await the same task (coalescing happens here, so a change
+    /// set is computed and notified exactly once).
+    @ObservationIgnored private var syncTasks: [UUID: Task<Void, Never>] = [:]
+    /// Last successful sync per project (memory only: persisting it would rewrite projects.json on every poll).
+    private(set) var lastSync: [UUID: Date] = [:]
 
-    private var service: SyncService?
-    private var projectsFile: ProjectsFile?
-    private(set) var env: ToolEnvironment?
+    @ObservationIgnored private var service: SyncService?
+    @ObservationIgnored private var projectsFile: ProjectsFile?
+    @ObservationIgnored private(set) var env: ToolEnvironment?
 
     static var bundleID: String { Bundle.main.bundleIdentifier ?? "uz.dkamaloff.beads" }
+
+    init() {
+        // Before anything async: a click on a notification may be what launched the app.
+        Notifier.shared.onOpen = { [weak self] project, issue in
+            self?.focusRequest = FocusRequest(project: project, issue: issue)
+        }
+    }
 
     func start() async {
         do {
@@ -58,35 +71,44 @@ final class AppModel {
             guard FileManager.default.isExecutableFile(atPath: dolt.path) else {
                 throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "Bundled dolt binary is missing"])
             }
-
             let env = ToolEnvironment(paths: paths, doltExecutable: dolt)
             self.env = env
             service = SyncService(env: env)
             projectsFile = ProjectsFile(url: paths.projectsFile)
             projects = try projectsFile?.load() ?? []
-
-            async let gitVersion = GitClient(env: env).version()
-            async let doltVersion = DoltClient(env: env).version()
-            toolStatus = try await "\(gitVersion) · \(doltVersion)"
         } catch {
             setupError = "\(error)"
-            toolStatus = "Setup failed"
             return
         }
-        Notifier.shared.onOpen = { [weak self] project, issue in self?.focusRequest = FocusRequest(project: project, issue: issue) }
-        Task { await Notifier.shared.requestAuthorizationIfNeeded() }
-        await withTaskGroup(of: Void.self) { group in
-            for project in projects { group.addTask { await self.loadCachedThenSync(project.id) } }
+
+        // Show cached data and start refreshing right away; nothing below waits for the network.
+        for project in projects {
+            Task { await loadCachedThenSync(project.id) }
         }
         startPolling()
+        Task { await Notifier.shared.requestAuthorizationIfNeeded() }
+        if let service { await service.removeOrphans(keeping: Set(projects.map(\.id))) }
+        await checkTools()
+    }
+
+    /// Self-check of git and dolt. A failure is reported but doesn't stop cached data from showing.
+    private func checkTools() async {
+        guard let env else { return }
+        do {
+            async let git = GitClient(env: env).version()
+            async let dolt = DoltClient(env: env).version()
+            _ = try await (git, dolt)
+            toolWarning = nil
+        } catch {
+            toolWarning = "\(error)"
+        }
     }
 
     // MARK: - Polling
 
-    /// Poll interval in seconds from Settings; 0 = off.
+    /// Poll interval in seconds from Settings; 0 = manual only.
     static var pollInterval: TimeInterval {
-        let value = UserDefaults.standard.object(forKey: SettingsKeys.pollSeconds) as? Double ?? 30
-        return value
+        UserDefaults.standard.object(forKey: SettingsKeys.pollSeconds) as? Double ?? 30
     }
 
     func startPolling() {
@@ -95,41 +117,25 @@ final class AppModel {
             while !Task.isCancelled {
                 let interval = AppModel.pollInterval
                 try? await Task.sleep(for: .seconds(interval > 0 ? min(interval, 15) : 15))
-                guard let self, interval > 0 else { continue }
-                await self.syncDue(olderThan: interval)
+                guard let self else { return }
+                self.scheduler.interval = AppModel.pollInterval
+                self.syncDue(minAge: nil)
             }
         }
     }
 
-    /// Syncs projects whose last sync is older than `age` and that aren't in failure backoff.
-    func syncDue(olderThan age: TimeInterval) async {
-        let now = Date.now
-        let due = projects.filter { p in
-            !state(of: p.id).isSyncing
-                && (nextAttempt[p.id].map { $0 <= now } ?? true)
-                && (p.lastSyncAt.map { now.timeIntervalSince($0) >= age - 1 } ?? true)
-        }
-        await withTaskGroup(of: Void.self) { group in
-            for project in due { group.addTask { await self.sync(project.id) } }
+    /// Starts (without waiting) syncs for projects the scheduler says are due.
+    private func syncDue(minAge: TimeInterval?) {
+        let busy = Set(syncTasks.keys)
+        for id in scheduler.due(projects.map(\.id), now: .now, minAge: minAge, busy: busy) {
+            Task { await sync(id) }
         }
     }
 
-    /// Called when the app comes to the front: refresh anything not synced in the last few seconds.
+    /// App came to the front: refresh anything not synced in the last few seconds (not in manual mode).
     func appDidBecomeActive() {
-        Task { await syncDue(olderThan: 10) }
-    }
-
-    /// Exponential backoff after failures: interval × 2^n, capped at 10 minutes.
-    private func recordResult(_ id: UUID, success: Bool) {
-        if success {
-            failures[id] = nil
-            nextAttempt[id] = nil
-        } else {
-            let n = (failures[id] ?? 0) + 1
-            failures[id] = n
-            let base = max(AppModel.pollInterval, 30)
-            nextAttempt[id] = .now.addingTimeInterval(min(base * pow(2, Double(n - 1)), 600))
-        }
+        scheduler.interval = Self.pollInterval
+        syncDue(minAge: 10)
     }
 
     func state(of id: UUID) -> ProjectState { states[id] ?? ProjectState() }
@@ -148,12 +154,21 @@ final class AppModel {
         return project
     }
 
+    /// Removes the project from the list now; its running sync is cancelled and awaited before its
+    /// data folder is deleted, so nothing is recreated afterwards.
     func removeProject(_ id: UUID) {
         projects.removeAll { $0.id == id }
         states[id] = nil
         recentChanges[id] = nil
+        lastSync[id] = nil
+        scheduler.forget(id)
         try? save()
-        if let env { try? FileManager.default.removeItem(at: env.paths.projectDir(id)) }
+        let running = syncTasks[id]
+        running?.cancel()
+        Task {
+            await running?.value
+            await service?.remove(id)
+        }
     }
 
     func checkAccess(address: String, keyPath: String?) async throws -> AccessCheck {
@@ -169,7 +184,7 @@ final class AppModel {
 
     func loadCachedThenSync(_ id: UUID) async {
         guard let service, let project = project(id) else { return }
-        if let (data, url) = try? await service.loadCached(project) {
+        if state(of: id).board == nil, let (data, url) = try? await service.loadCached(project) {
             await apply(data, snapshot: url, to: id)
         }
         await sync(id)
@@ -181,7 +196,19 @@ final class AppModel {
         }
     }
 
+    /// Syncs a project; concurrent calls for the same project share one run.
     func sync(_ id: UUID) async {
+        if let running = syncTasks[id] {
+            await running.value
+            return
+        }
+        let task = Task { await performSync(id) }
+        syncTasks[id] = task
+        await task.value
+        syncTasks[id] = nil
+    }
+
+    private func performSync(_ id: UUID) async {
         guard let service, let project = project(id) else { return }
         states[id, default: ProjectState()].isSyncing = true
         defer { states[id]?.isSyncing = false }
@@ -191,20 +218,29 @@ final class AppModel {
                 if state(of: id).board == nil, let (data, url) = try await service.loadCached(project) {
                     await apply(data, snapshot: url, to: id)
                 }
-            case let .updated(data, snapshot):
+            case let .updated(data, snapshot, refID):
                 let previous = state(of: id).board
                 await apply(data, snapshot: snapshot, to: id)
-                update(id) { $0.lastCommit = data.commit }
+                update(id) {
+                    $0.lastCommit = data.commit
+                    $0.lastRefID = refID
+                }
                 if let previous, let current = state(of: id).board {
                     noteChanges(ChangeDetector.changes(from: previous, to: current), project: id)
                 }
             }
-            update(id) { $0.lastSyncAt = .now }
+            guard self.project(id) != nil else { return }
+            lastSync[id] = .now
             states[id]?.error = nil
-            recordResult(id, success: true)
+            scheduler.record(id, success: true, now: .now)
+        } catch is CancellationError {
+            return
+        } catch ProcessError.cancelled {
+            return
         } catch {
+            guard self.project(id) != nil else { return }
             states[id, default: ProjectState()].error = "\(error)"
-            recordResult(id, success: false)
+            scheduler.record(id, success: false, now: .now)
         }
     }
 
@@ -219,12 +255,6 @@ final class AppModel {
         if let project = project(id) { Notifier.shared.post(changes, project: project) }
     }
 
-    func recentChange(_ issueID: String, in project: UUID) -> RecentChange? {
-        guard let change = recentChanges[project]?[issueID],
-              Date.now.timeIntervalSince(change.at) < Self.highlightDuration else { return nil }
-        return change
-    }
-
     private func apply(_ data: BeadsData, snapshot: URL, to id: UUID) async {
         let board = await Task.detached(priority: .userInitiated) { BoardIndex(data) }.value
         guard projects.contains(where: { $0.id == id }) else { return }
@@ -235,15 +265,21 @@ final class AppModel {
     // MARK: - Detail
 
     func detail(_ issueID: String, project id: UUID) async throws -> IssueDetail? {
-        guard let env, let snapshot = state(of: id).snapshot else { return nil }
-        return try await BeadsReader(dolt: DoltClient(env: env)).detail(issueID: issueID, snapshot: snapshot)
+        let state = state(of: id)
+        guard let env, let snapshot = state.snapshot, let board = state.board else { return nil }
+        return try await BeadsReader(dolt: DoltClient(env: env))
+            .detail(issueID: issueID, snapshot: snapshot, tables: board.data.tables)
     }
 
     // MARK: - Persistence
 
+    /// Applies a change and writes projects.json only if something actually changed.
     private func update(_ id: UUID, _ change: (inout Project) -> Void) {
         guard let i = projects.firstIndex(where: { $0.id == id }) else { return }
-        change(&projects[i])
+        var copy = projects[i]
+        change(&copy)
+        guard copy != projects[i] else { return }
+        projects[i] = copy
         try? save()
     }
 

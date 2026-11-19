@@ -29,7 +29,8 @@ public struct DoltClient: Sendable {
     public func query(_ statements: [String], in database: URL) async throws -> [Data] {
         let sql = statements.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "; \n")) }.joined(separator: ";\n") + ";"
         let out = try await ProcessRunner.run(env.doltExecutable, ["sql", "-r", "json", "-q", sql],
-                                              environment: env.doltEnvironment(), currentDirectory: database, timeout: 120)
+                                              environment: env.doltEnvironment(), currentDirectory: database, timeout: 120,
+                                              sandboxProfile: Self.sandboxProfile(database: database, env: env))
         guard out.status == 0 else {
             throw DoltError.queryFailed(out.stderrString.trimmingCharacters(in: .whitespacesAndNewlines))
         }
@@ -38,6 +39,26 @@ public struct DoltClient: Sendable {
             throw DoltError.malformedOutput("expected \(statements.count) result sets, got \(results.count)")
         }
         return results
+    }
+
+    /// The database comes from an untrusted repository, so dolt runs with no network, may write only to the
+    /// snapshot and its own config root, and may read nothing under the home folder except those and itself.
+    static func sandboxProfile(database: URL, env: ToolEnvironment) -> String {
+        func lit(_ url: URL) -> String {
+            let path = url.resolvingSymlinksInPath().path
+            return "\"" + path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        }
+        let home = URL(filePath: NSHomeDirectory())
+        let db = lit(database), root = lit(env.paths.doltRoot), tool = lit(env.doltExecutable.deletingLastPathComponent())
+        return """
+        (version 1)
+        (allow default)
+        (deny network*)
+        (deny file-write*)
+        (allow file-write* (subpath \(db)) (subpath \(root)) (literal "/dev/null") (subpath "/private/var/folders"))
+        (deny file-read* (subpath \(lit(home))))
+        (allow file-read* (literal \(lit(home))) (subpath \(db)) (subpath \(root)) (subpath \(tool)))
+        """
     }
 
     /// Extracts the `rows` array of each result object as standalone JSON.

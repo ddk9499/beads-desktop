@@ -31,7 +31,8 @@ function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 function elements(p) {
   const nodes = p.nodes.map(n => ({
     data: {
-      id: n.id,
+      id: 'n:' + n.id,
+      beadId: n.id,
       label: n.id + '\n' + truncate(n.title, 46),
       color: columnColor[n.column] || '#8e8e93',
       inside: n.inside ? 1 : 0,
@@ -40,8 +41,9 @@ function elements(p) {
       epic: n.type === 'epic' ? 1 : 0,
     },
   }));
-  const edges = p.edges.map(e => ({
-    data: { id: e.id, source: e.source, target: e.target, type: e.type },
+  // Namespaced ids: node ids come from the repository and must never collide with edge ids.
+  const edges = p.edges.map((e, i) => ({
+    data: { id: 'e:' + i, source: 'n:' + e.source, target: 'n:' + e.target, type: e.type },
   }));
   return nodes.concat(edges);
 }
@@ -103,13 +105,13 @@ window.render = function (payload) {
   });
   cy.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 18, rankSep: 70, edgeSep: 8, animate: false, fit: true,
               padding: 30 }).run();
-  const anchor = cy.getElementById(p.anchor);
+  const anchor = cy.getElementById('n:' + p.anchor);
   if (anchor && anchor.length && cy.nodes().length > 25) {
     cy.zoom(Math.max(cy.zoom(), 0.6));
     cy.center(anchor);
   }
   select(p.selected);
-  cy.on('tap', 'node', evt => post('select', evt.target.id()));
+  cy.on('tap', 'node', evt => post('select', evt.target.data('beadId')));
   cy.on('tap', evt => { if (evt.target === cy) post('select', ''); });
   return { nodes: cy.nodes().length, relayout: true };
 };
@@ -117,9 +119,7 @@ window.render = function (payload) {
 function select(id) {
   if (!cy) return;
   cy.nodes(':selected').unselect();
-  if (id) cy.getElementById(id).select();
+  if (id) cy.getElementById('n:' + id).select();
 }
-
-window.fit = function () { if (cy) cy.fit(undefined, 30); };
 
 post('ready', '');

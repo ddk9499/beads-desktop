@@ -59,10 +59,14 @@ public struct AppPaths: Sendable {
 /// Fingerprints (SHA256): ED25519 +DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU,
 /// ECDSA p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM, RSA uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s.
 public enum KnownHosts {
+    /// Hosts whose keys are pinned below; for them nothing else is trusted.
+    public static func isPinned(_ host: String) -> Bool { host.lowercased() == "github.com" }
+
     public static let github = """
     github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
     github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
     github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+    @revoked github.com ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEAq2A7hRGmdnm9tUDbO9IDSwBK6TbQa+PXYPCPy6rbTrTtw7PHkccKrpp0yVhp5HdEIcKr6pLlVDBfOLX9QUsyCOV0wzfjIJNlGEYsdlLJizHhbn2mUjvSAHQqZETYP81eFzLQNnPHt4EVVUh7VfDESU84KezmD5QlWpXLmvU31/yMf+Se8xhHTvKSCZIFImWwoG6mbUoWf9nzpIoaSjB+weqqUUmpaaasXVal72J+UX2B+2RPW3RcT0eOzQgqlJL3RKrTJvdsjE3JEAvGq3lGHSZXy28G3skua2SmVi/w4yCE6gbODqnTWlg7+wC604ydGXA8VJiS5ap43JXiUFFAaQ==
 
     """
 }
@@ -91,13 +95,23 @@ public struct ToolEnvironment: Sendable {
     }
 
     /// ssh options as argv (used directly for `ssh -T`, and joined into GIT_SSH_COMMAND for git).
-    public func sshOptions(_ identity: SSHIdentity) -> [String] {
+    /// - Parameter host: the server being contacted. For hosts we pin (github.com) only the pinned keys are trusted.
+    public func sshOptions(_ identity: SSHIdentity, host: String = "github.com") -> [String] {
+        // For pinned hosts, ~/.ssh/known_hosts (which may still hold GitHub's RSA key leaked in 2023) and the
+        // global file are not consulted; other hosts use the pinned file plus the user's known_hosts.
+        let knownHosts = KnownHosts.isPinned(host)
+            ? "UserKnownHostsFile=\"\(paths.knownHostsFile.path)\""
+            : "UserKnownHostsFile=\"\(paths.knownHostsFile.path)\" \"\(NSHomeDirectory())/.ssh/known_hosts\""
         var opts = [
             "-o", "BatchMode=yes",                       // never prompt (passphrase, host key, password)
             "-o", "ConnectTimeout=15",
             "-o", "StrictHostKeyChecking=yes",
-            // ssh splits this list on spaces; quote each path ("Application Support" has a space).
-            "-o", "UserKnownHostsFile=\"\(paths.knownHostsFile.path)\" \"\(NSHomeDirectory())/.ssh/known_hosts\"",
+            // ssh splits this list on spaces; each path is quoted ("Application Support" has a space).
+            "-o", knownHosts,
+            "-o", KnownHosts.isPinned(host) ? "GlobalKnownHostsFile=/dev/null" : "GlobalKnownHostsFile=/etc/ssh/ssh_known_hosts",
+            // Detect dead connections (sleep, network change) instead of hanging.
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=3",
             "-o", "ControlMaster=auto",
             // %C hashes host/port/user but NOT the key: without the identity tag, two projects using different
             // keys for github.com would share one master connection and silently act as the wrong account.
@@ -112,9 +126,9 @@ public struct ToolEnvironment: Sendable {
         return opts
     }
 
-    public func gitEnvironment(_ identity: SSHIdentity) -> [String: String] {
+    public func gitEnvironment(_ identity: SSHIdentity, host: String = "github.com") -> [String: String] {
         // GIT_SSH_COMMAND is evaluated by a shell: quote every token.
-        let command = ([sshExecutable.path] + sshOptions(identity)).map(Self.shellQuote).joined(separator: " ")
+        let command = ([sshExecutable.path] + sshOptions(identity, host: host)).map(Self.shellQuote).joined(separator: " ")
         var env = baseEnvironment()
         env["GIT_SSH_COMMAND"] = command
         env["GIT_TERMINAL_PROMPT"] = "0"

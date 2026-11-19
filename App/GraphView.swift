@@ -21,15 +21,12 @@ struct GraphModeView: View {
     @Binding var selection: String?
     @Binding var anchor: GraphAnchor?
     @Environment(\.colorScheme) private var colorScheme
+    /// Built off the main thread, only when the anchor or the data changes (not on every redraw).
+    @State private var scope: GraphScope?
 
     var body: some View {
         let epics = board.epics(among: issues, hideClosed: true)
         let effective = anchor ?? selection.map(GraphAnchor.issue) ?? epics.first.map { .epic($0.id) }
-        let scope: GraphScope? = switch effective {
-        case let .epic(id): GraphScope.epic(id, in: board)
-        case let .issue(id): GraphScope.neighborhood(of: id, in: board)
-        case nil: nil
-        }
 
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -62,10 +59,22 @@ struct GraphModeView: View {
             Divider()
             if let scope {
                 GraphWebView(scope: scope, board: board, selection: $selection, dark: colorScheme == .dark)
-            } else {
+            } else if effective == nil {
                 ContentUnavailableView("Nothing to graph", systemImage: "point.3.connected.trianglepath.dotted",
                                        description: Text("Select an issue or pick an epic."))
+            } else {
+                ProgressView()
             }
+        }
+        .task(id: "\(effective.map(\.id) ?? "")|\(String(describing: effective))|\(board.data.commit)") {
+            let board = board
+            scope = await Task.detached(priority: .userInitiated) { () -> GraphScope? in
+                switch effective {
+                case let .epic(id): GraphScope.epic(id, in: board)
+                case let .issue(id): GraphScope.neighborhood(of: id, in: board)
+                case nil: nil
+                }
+            }.value
         }
     }
 }
@@ -211,6 +220,14 @@ struct GraphWebView: NSViewRepresentable {
             default:
                 break
             }
+        }
+
+        /// The page's renderer process died (memory pressure, crash): reload and re-send the last graph.
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            isReady = false
+            pending = pending ?? lastSent
+            lastSent = nil
+            if let pageURL { webView.loadFileURL(pageURL, allowingReadAccessTo: pageURL.deletingLastPathComponent()) }
         }
 
         /// Only our bundled page may load; anything else (links, redirects) is refused.

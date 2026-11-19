@@ -81,9 +81,12 @@ struct RootView: View {
                     .help("Add a repository")
             }
             .safeAreaInset(edge: .bottom) {
-                if let setupError = model.setupError {
-                    Text(setupError).font(.caption2).foregroundStyle(.red).lineLimit(4)
-                        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                if let problem = model.setupError ?? model.toolWarning {
+                    Label { Text(problem).lineLimit(4).textSelection(.enabled) } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                    }
+                    .font(.caption2).foregroundStyle(model.setupError != nil ? .red : .orange)
+                    .padding(8).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .overlay {
@@ -182,7 +185,7 @@ struct SettingsView: View {
             }
 
             Section {
-                TextField("Human names", text: $humanNames, prompt: Text("doston, Doston Kamalov"), axis: .vertical)
+                TextField("Human names", text: $humanNames, prompt: Text("alice, Alice Smith"), axis: .vertical)
                     .lineLimit(2...5)
             } header: {
                 Text("Attribution")

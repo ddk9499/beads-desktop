@@ -5,7 +5,7 @@ import Testing
 /// Network tests against real repositories. Enabled only when these are set:
 ///   BEADS_IT_DOLT     path to a dolt binary (e.g. Vendor/dolt/dolt)
 ///   BEADS_IT_SSH_KEY  private key that GitHub accepts
-///   BEADS_IT_PRIVATE  optional private repo with beads data, e.g. git@github.com:ddk9499/beads-spike-tmp.git
+///   BEADS_IT_PRIVATE  optional private repo with beads data, e.g. git@github.com:octo-org/private-beads.git
 enum IT {
     static let env = ProcessInfo.processInfo.environment
     static var enabled: Bool { env["BEADS_IT_DOLT"] != nil && env["BEADS_IT_SSH_KEY"] != nil }
@@ -37,19 +37,19 @@ enum IT {
 
         let clock = ContinuousClock()
         let start = clock.now
-        guard case let .updated(data, snapshot) = try await service.sync(project) else {
+        guard case let .updated(data, snapshot, _) = try await service.sync(project) else {
             Testing.Issue.record("expected first sync to fetch"); return
         }
         print("first sync: \(clock.now - start), issues: \(data.issues.count), schema: \(data.schemaVersion)")
         #expect(data.issues.count > 1000)
-        #expect(!data.readyIDs.isEmpty)
+        #expect(BoardIndex(data).columns.values.contains(.ready))
         #expect(data.dependencies.contains { $0.type == Dependency.parentChild })
         #expect(BeadsReader.support(for: data.schemaVersion) == .supported)
 
         // Detail of an issue that has comments.
         let reader = BeadsReader(dolt: DoltClient(env: env))
         if let withComments = data.issues.first(where: { $0.status == "closed" }) {
-            _ = try await reader.detail(issueID: withComments.id, snapshot: snapshot)
+            _ = try await reader.detail(issueID: withComments.id, snapshot: snapshot, tables: data.tables)
         }
 
         project.lastCommit = data.commit
@@ -74,13 +74,13 @@ enum IT {
         print("ssh key authenticates as: \(account)")
 
         let service = SyncService(env: env)
-        guard case let .updated(data, snapshot) = try await service.sync(Project(remote: remote, identity: IT.identity)) else {
+        guard case let .updated(data, snapshot, _) = try await service.sync(Project(remote: remote, identity: IT.identity)) else {
             Testing.Issue.record("expected fetch"); return
         }
         #expect(!data.issues.isEmpty)
         let epic = try #require(data.issues.first { $0.issueType == "epic" })
-        #expect(!data.children(of: epic.id).isEmpty)
-        let detail = try await BeadsReader(dolt: DoltClient(env: env)).detail(issueID: epic.id, snapshot: snapshot)
+        #expect(!BoardIndex(data).children(of: epic.id).isEmpty)
+        let detail = try await BeadsReader(dolt: DoltClient(env: env)).detail(issueID: epic.id, snapshot: snapshot, tables: data.tables)
         print("epic \(epic.id) comments: \(detail.comments.map(\.text))")
     }
 

@@ -8,7 +8,8 @@ public struct Project: Identifiable, Hashable, Codable, Sendable {
     public var customName: String?
     /// Commit of `refs/dolt/data` that the current snapshot was built from.
     public var lastCommit: String?
-    public var lastSyncAt: Date?
+    /// Raw id of the ref when it was fetched (differs from `lastCommit` for annotated tags).
+    public var lastRefID: String?
     public let addedAt: Date
 
     public init(id: UUID = UUID(), remote: RemoteURL, identity: SSHIdentity, customName: String? = nil) {
@@ -69,8 +70,8 @@ public struct SSHProbe: Sendable {
     /// Matters when one machine has keys for several GitHub accounts.
     public func account(host: String, user: String = "git", identity: SSHIdentity) async throws -> String {
         let out = try await ProcessRunner.run(
-            env.sshExecutable, env.sshOptions(identity) + ["-T", "--", "\(user)@\(host)"],
-            environment: env.gitEnvironment(identity), timeout: 30
+            env.sshExecutable, env.sshOptions(identity, host: host) + ["-T", "--", "\(user)@\(host)"],
+            environment: env.gitEnvironment(identity, host: host), timeout: 30
         )
         let text = out.stderrString + out.stdoutString
         if let range = text.range(of: #"Hi ([A-Za-z0-9_.-]+)!"#, options: .regularExpression) {

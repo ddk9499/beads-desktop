@@ -4,20 +4,20 @@ import Testing
 
 @Suite struct RemoteURLTests {
     @Test(arguments: [
-        "git@github.com:ddk9499/beads-spike-tmp.git",
-        "git@github.com:ddk9499/beads-spike-tmp",
-        "ssh://git@github.com/ddk9499/beads-spike-tmp.git",
-        "git+ssh://git@github.com/ddk9499/beads-spike-tmp.git",
-        "https://github.com/ddk9499/beads-spike-tmp",
-        "https://github.com/ddk9499/beads-spike-tmp.git",
-        "github.com/ddk9499/beads-spike-tmp",
-        "ddk9499/beads-spike-tmp",
-        "  git@github.com:ddk9499/beads-spike-tmp.git\n",
+        "git@github.com:octo-org/private-beads.git",
+        "git@github.com:octo-org/private-beads",
+        "ssh://git@github.com/octo-org/private-beads.git",
+        "git+ssh://git@github.com/octo-org/private-beads.git",
+        "https://github.com/octo-org/private-beads",
+        "https://github.com/octo-org/private-beads.git",
+        "github.com/octo-org/private-beads",
+        "octo-org/private-beads",
+        "  git@github.com:octo-org/private-beads.git\n",
     ])
     func normalizesToSSH(_ input: String) throws {
         let url = try RemoteURL.parse(input)
-        #expect(url.gitURL == "ssh://git@github.com/ddk9499/beads-spike-tmp.git")
-        #expect(url.description == "ddk9499/beads-spike-tmp")
+        #expect(url.gitURL == "ssh://git@github.com/octo-org/private-beads.git")
+        #expect(url.description == "octo-org/private-beads")
     }
 
     @Test func keepsCustomPortAndUser() throws {

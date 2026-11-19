@@ -22,6 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 -----
 cytoscape-dagre 4.0.1 (bundles dagre) — MIT
+Note: the dist file inside the 4.0.1 npm package still says "4.0.0" in its banner (upstream didn't bump it);
+the file is byte-identical to the one in cytoscape-dagre-4.0.1.tgz. Checksums: SHA256SUMS, verify with scripts/verify-graph-vendor.sh.
 npm integrity: sha512-hyNdh8Vp1nwzBcjHnM4c71G81bFhPmQYLXD2HM9AZIvl+8TrMzWEOPW45hF/XOBQiEguPcDQzi6VrXR1XBcXOA==
 
 

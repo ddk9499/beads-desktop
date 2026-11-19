@@ -12,7 +12,7 @@ struct AddProjectSheet: View {
     @State private var check: AppModel.AccessCheck?
     @State private var checking = false
     @State private var error: String?
-    private let keys = SSHProbe.availableKeys()
+    @State private var keys: [URL] = []
 
     private var parsed: Result<RemoteURL, RemoteURL.ParseError>? {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -69,6 +69,7 @@ struct AddProjectSheet: View {
             .formStyle(.grouped)
         }
         .frame(width: 520)
+        .task { keys = SSHProbe.availableKeys() }
         .onChange(of: address) { check = nil }
         .onChange(of: keyPath) { check = nil }
         .toolbar {

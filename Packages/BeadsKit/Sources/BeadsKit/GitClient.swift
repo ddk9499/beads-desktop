@@ -15,6 +15,9 @@ public enum RemoteError: Error, Sendable, Equatable, CustomStringConvertible {
     case network(detail: String)
     case noBeadsData
     case unexpectedTreeEntry(String)
+    /// The ref's layout or the Dolt manifest is not a format this app understands.
+    case unsupportedStorage(String)
+    case tooLarge(String)
     case gitFailed(command: String, detail: String)
 
     public var description: String {
@@ -37,6 +40,11 @@ public enum RemoteError: Error, Sendable, Equatable, CustomStringConvertible {
             "This repository has no beads data (refs/dolt/data). Run `bd dolt push` in a beads workspace first."
         case let .unexpectedTreeEntry(name):
             "Unexpected file in beads data: \(name)"
+        case let .unsupportedStorage(detail):
+            "The beads data uses a Dolt storage format this version of the app doesn't support (\(detail)). "
+                + "It was probably written by a newer dolt/bd; an app update is needed."
+        case let .tooLarge(detail):
+            "The beads data is too large to load (\(detail))."
         case let .gitFailed(cmd, d):
             "git \(cmd) failed.\n\(d)"
         }
@@ -78,12 +86,12 @@ public struct GitClient: Sendable {
 
     public init(env: ToolEnvironment) { self.env = env }
 
-    private func git(_ args: [String], identity: SSHIdentity, in dir: URL? = nil,
-                     stdoutFile: URL? = nil, timeout: Double = 120) async throws -> ProcessOutput {
+    private func git(_ args: [String], identity: SSHIdentity, host: String = "github.com", in dir: URL? = nil,
+                     stdoutFile: URL? = nil, timeout: Double = 120, extraEnv: [String: String] = [:]) async throws -> ProcessOutput {
         if let key = identity.privateKeyPath, !FileManager.default.isReadableFile(atPath: key) {
             throw RemoteError.keyFileMissing(path: key)
         }
-        let out = try await ProcessRunner.run(env.gitExecutable, args, environment: env.gitEnvironment(identity),
+        let out = try await ProcessRunner.run(env.gitExecutable, args, environment: env.gitEnvironment(identity, host: host).merging(extraEnv) { $1 },
                                               currentDirectory: dir, stdoutFile: stdoutFile, timeout: timeout)
         guard out.status == 0 else {
             throw RemoteError.classify(stderr: out.stderrString, command: args.first ?? "")
@@ -99,7 +107,7 @@ public struct GitClient: Sendable {
 
     /// Current object id of `refs/dolt/data`, or `nil` when the repo has none.
     public func remoteDataRef(_ remote: RemoteURL, identity: SSHIdentity) async throws -> String? {
-        let out = try await git(["ls-remote", "--", remote.gitURL, beadsDataRef], identity: identity, timeout: 60)
+        let out = try await git(["ls-remote", "--", remote.gitURL, beadsDataRef], identity: identity, host: remote.host, timeout: 60)
         for line in out.stdoutString.split(separator: "\n") {
             let cols = line.split(separator: "\t")
             if cols.count == 2, cols[1] == beadsDataRef, Self.isObjectID(String(cols[0])) { return String(cols[0]) }
@@ -117,7 +125,7 @@ public struct GitClient: Sendable {
     public func fetchDataRef(_ remote: RemoteURL, identity: SSHIdentity, into bareRepo: URL) async throws -> String {
         _ = try await git(["--git-dir", bareRepo.path, "fetch", "--quiet", "--no-tags", "--depth=1", "--force",
                            "--", remote.gitURL, "+\(beadsDataRef):\(beadsDataRef)"],
-                          identity: identity, timeout: 600)
+                          identity: identity, host: remote.host, timeout: 600)
         let sha = try await git(["--git-dir", bareRepo.path, "rev-parse", "--verify", "\(beadsDataRef)^{commit}"],
                                 identity: identity).stdoutString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.isObjectID(sha) else { throw RemoteError.gitFailed(command: "rev-parse", detail: sha) }
@@ -131,10 +139,17 @@ public struct GitClient: Sendable {
         return try Self.parseTree(out.stdout)
     }
 
-    public func writeBlob(_ objectID: String, in bareRepo: URL, to file: URL) async throws {
-        guard Self.isObjectID(objectID) else { throw RemoteError.unexpectedTreeEntry(objectID) }
-        _ = try await git(["--git-dir", bareRepo.path, "cat-file", "blob", objectID],
-                          identity: SSHIdentity(privateKeyPath: nil), stdoutFile: file, timeout: 600)
+    /// Writes the named files of `commit` into `directory` with one git process. Names must come from a
+    /// validated `listTree` (plain file names, no globs: `--literal-pathspecs` makes them literal anyway).
+    public func extract(_ names: [String], commit: String, from bareRepo: URL, into directory: URL, indexFile: URL) async throws {
+        guard !names.isEmpty else { return }
+        guard Self.isObjectID(commit), names.allSatisfy(Self.isSafeStoreFileName) else {
+            throw RemoteError.unexpectedTreeEntry(names.first { !Self.isSafeStoreFileName($0) } ?? commit)
+        }
+        _ = try await git(["--literal-pathspecs", "--git-dir", bareRepo.path, "--work-tree", directory.path,
+                           "checkout", "--quiet", commit, "--"] + names,
+                          identity: SSHIdentity(privateKeyPath: nil), timeout: 600,
+                          extraEnv: ["GIT_INDEX_FILE": indexFile.path])
     }
 
     /// Drops objects no longer reachable after a forced ref update (each fetch replaces the whole store).
@@ -163,7 +178,11 @@ public struct GitClient: Sendable {
             guard let tab = line.firstIndex(of: "\t") else { throw RemoteError.unexpectedTreeEntry(line) }
             let meta = line[..<tab].split(separator: " ", omittingEmptySubsequences: true)
             let name = String(line[line.index(after: tab)...])
-            guard meta.count == 4, meta[1] == "blob", meta[0] == "100644" || meta[0] == "100755",
+            if meta.count >= 2, meta[1] != "blob" {
+                // A subdirectory or submodule: a newer Dolt layout, not an attack we need to dissect.
+                throw RemoteError.unsupportedStorage("\(meta[1]) entry '\(name.prefix(64))' in \(beadsDataRef)")
+            }
+            guard meta.count == 4, meta[0] == "100644" || meta[0] == "100755",
                   isObjectID(String(meta[2])), let size = Int(meta[3]), isSafeStoreFileName(name)
             else { throw RemoteError.unexpectedTreeEntry(line) }
             entries.append(TreeEntry(objectID: String(meta[2]), name: name, size: size))

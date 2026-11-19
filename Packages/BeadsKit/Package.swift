@@ -9,6 +9,6 @@ let package = Package(
     ],
     targets: [
         .target(name: "BeadsKit"),
-        .testTarget(name: "BeadsKitTests", dependencies: ["BeadsKit"]),
+        .testTarget(name: "BeadsKitTests", dependencies: ["BeadsKit"], resources: [.copy("Fixtures")]),
     ]
 )

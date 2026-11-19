@@ -13,30 +13,49 @@ public struct ProcessOutput: Sendable {
 public enum ProcessError: Error, Sendable, CustomStringConvertible {
     case launchFailed(executable: String, underlying: String)
     case timedOut(executable: String, seconds: Double)
+    case outputTooLarge(executable: String, limit: Int)
+    case cancelled(executable: String)
 
     public var description: String {
         switch self {
         case let .launchFailed(exe, err): "Failed to launch \(exe): \(err)"
         case let .timedOut(exe, s): "\(exe) did not finish within \(Int(s)) s"
+        case let .outputTooLarge(exe, limit): "\(exe) produced more than \(limit / 1_048_576) MB of output; stopped"
+        case let .cancelled(exe): "\(exe) was cancelled"
         }
     }
 }
 
 /// Runs external tools (git, ssh, dolt) without a shell. Arguments are passed as argv, never interpolated.
 public enum ProcessRunner {
+    /// Default cap for collected stdout (data comes from untrusted repositories).
+    public static let defaultOutputLimit = 64 * 1_048_576
+    static let stderrLimit = 1_048_576
+    /// Grace period between SIGTERM and SIGKILL.
+    static let killGrace: Double = 5
+
     /// - Parameters:
     ///   - stdoutFile: when set, stdout is streamed into this file instead of being collected in memory.
+    ///   - outputLimit: max bytes of collected stdout; exceeding it kills the process and throws `outputTooLarge`.
+    ///   - sandboxProfile: when set, the tool runs under `sandbox-exec -p <profile>`.
     public static func run(
         _ executable: URL,
         _ arguments: [String],
         environment: [String: String],
         currentDirectory: URL? = nil,
         stdoutFile: URL? = nil,
-        timeout: Double = 120
+        timeout: Double = 120,
+        outputLimit: Int = defaultOutputLimit,
+        sandboxProfile: String? = nil
     ) async throws -> ProcessOutput {
         let process = Process()
-        process.executableURL = executable
-        process.arguments = arguments
+        if let sandboxProfile {
+            process.executableURL = URL(filePath: "/usr/bin/sandbox-exec")
+            process.arguments = ["-p", sandboxProfile, executable.path] + arguments
+        } else {
+            process.executableURL = executable
+            process.arguments = arguments
+        }
         process.environment = environment
         if let currentDirectory { process.currentDirectoryURL = currentDirectory }
         process.standardInput = FileHandle.nullDevice
@@ -70,33 +89,89 @@ public enum ProcessRunner {
             throw ProcessError.launchFailed(executable: executable.path, underlying: "\(error)")
         }
 
-        // Drain pipes concurrently so a full pipe buffer can never deadlock the child.
-        async let outData: Data = Task.detached { outPipe?.fileHandleForReading.readDataToEndOfFile() ?? Data() }.value
-        async let errData: Data = Task.detached { errPipe.fileHandleForReading.readDataToEndOfFile() }.value
+        let reason = StopReason()
+        let stopper = Stopper(process: process)
 
-        let timedOut = TimeoutFlag()
+        // Drain pipes concurrently so a full pipe buffer can never deadlock the child. Reading stops
+        // accumulating past the limit and the process is killed.
+        async let outData: Data = Task.detached {
+            guard let handle = outPipe?.fileHandleForReading else { return Data() }
+            return drain(handle, limit: outputLimit) { reason.set(.outputTooLarge); stopper.stop() }
+        }.value
+        async let errData: Data = Task.detached {
+            drain(errPipe.fileHandleForReading, limit: stderrLimit) {}
+        }.value
+
         let timeoutTask = Task {
             try? await Task.sleep(for: .seconds(timeout))
             guard !Task.isCancelled, process.isRunning else { return }
-            timedOut.set()
-            process.terminate()
+            reason.set(.timedOut)
+            stopper.stop()
         }
 
-        var status: Int32 = -1
-        for await s in exited.stream { status = s }
+        let status: Int32 = await withTaskCancellationHandler {
+            var status: Int32 = -1
+            for await s in exited.stream { status = s }
+            return status
+        } onCancel: {
+            reason.set(.cancelled)
+            stopper.stop()
+        }
         timeoutTask.cancel()
         let (out, err) = await (outData, errData)
 
-        if timedOut.isSet {
-            throw ProcessError.timedOut(executable: executable.lastPathComponent, seconds: timeout)
+        switch reason.value {
+        case .timedOut: throw ProcessError.timedOut(executable: executable.lastPathComponent, seconds: timeout)
+        case .outputTooLarge: throw ProcessError.outputTooLarge(executable: executable.lastPathComponent, limit: outputLimit)
+        case .cancelled: throw ProcessError.cancelled(executable: executable.lastPathComponent)
+        case nil: return ProcessOutput(status: status, stdout: out, stderr: err)
         }
-        return ProcessOutput(status: status, stdout: out, stderr: err)
+    }
+
+    /// Reads until EOF; keeps at most `limit` bytes and calls `overflow` once when exceeded (still draining).
+    static func drain(_ handle: FileHandle, limit: Int, overflow: () -> Void) -> Data {
+        var data = Data()
+        var overflowed = false
+        while true {
+            let chunk = handle.availableData
+            if chunk.isEmpty { break }
+            if data.count + chunk.count > limit {
+                if !overflowed { overflowed = true; overflow() }
+                continue
+            }
+            data.append(chunk)
+        }
+        return data
     }
 }
 
-private final class TimeoutFlag: @unchecked Sendable {
+/// Why a process was stopped by us (first reason wins).
+private final class StopReason: @unchecked Sendable {
+    enum Kind { case timedOut, outputTooLarge, cancelled }
     private let lock = NSLock()
-    private var value = false
-    func set() { lock.withLock { value = true } }
-    var isSet: Bool { lock.withLock { value } }
+    private var kind: Kind?
+    func set(_ k: Kind) { lock.withLock { if kind == nil { kind = k } } }
+    var value: Kind? { lock.withLock { kind } }
+}
+
+/// SIGTERM, then SIGKILL after a grace period if the process is still alive.
+private final class Stopper: @unchecked Sendable {
+    private let process: Process
+    private let lock = NSLock()
+    private var stopping = false
+
+    init(process: Process) { self.process = process }
+
+    func stop() {
+        let first = lock.withLock { () -> Bool in
+            defer { stopping = true }
+            return !stopping
+        }
+        guard first, process.isRunning else { return }
+        let pid = process.processIdentifier
+        process.terminate()
+        DispatchQueue.global().asyncAfter(deadline: .now() + ProcessRunner.killGrace) { [process] in
+            if process.isRunning { kill(pid, SIGKILL) }
+        }
+    }
 }

@@ -17,7 +17,7 @@ import Testing
 
     static func board(_ issues: [BeadsKit.Issue], _ deps: [Dependency] = [], custom: [CustomStatus] = []) -> BoardIndex {
         BoardIndex(BeadsData(commit: "c", schemaVersion: 66, issues: issues, dependencies: deps, labels: [],
-                             customStatuses: custom, readyIDs: [], blockedIDs: []))
+                             customStatuses: custom))
     }
 
     @Test func builtInStatusesMapLikeScotty() {
@@ -32,7 +32,7 @@ import Testing
         #expect(b.columns["e"] == .blocked)
         #expect(b.columns["f"] == .done)
         #expect(b.columns["g"] == nil)
-        #expect(b.unplacedCount == 1)
+        #expect(b.columns.count == 6)   // `pinned` has no column
     }
 
     @Test func openWithOpenBlockerIsBlocked() {

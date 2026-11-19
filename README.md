@@ -47,8 +47,18 @@ swift test
 3. The ref's tree *is* a Dolt store: its files are laid out into `snapshots/<commit>/.dolt/noms/`.
 4. The bundled `dolt sql -r json` reads beads tables (schema-adaptive; tested on schema 60–66).
 
-Data from the remote is untrusted: tree entries are validated, SQL never interpolates unvalidated strings,
-text is rendered as plain text. dolt metrics and version checks are disabled.
+Data from the remote is untrusted:
+- tree entries are validated (plain files only, strict names, size/count limits, known manifest format);
+- only base tables are read — if a beads table is replaced by a SQL VIEW (code dolt would run) the snapshot is refused;
+- dolt runs under `sandbox-exec`: no network, writes only to the snapshot and its config root, no reads under `~`
+  besides those; collected output is capped and runaway processes are killed (SIGTERM → SIGKILL);
+- SQL never interpolates unvalidated strings;
+- bead text is shown as inline markdown with http(s) links only (no HTML, images or other URL schemes);
+- github.com host keys are pinned (the user's known_hosts is not consulted for it; the 2023 RSA key is revoked);
+- dolt metrics and version checks are disabled.
+
+`scripts/verify-graph-vendor.sh [--upstream]` checks the vendored graph libraries against their recorded sha256
+(and against the npm packages).
 
 ## Debugging the UI from a script (Debug builds only)
 
