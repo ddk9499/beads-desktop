@@ -7,3 +7,4 @@ DerivedData/
 .swiftpm/
 xcuserdata/
 /Config/Signing.xcconfig
+/dist/

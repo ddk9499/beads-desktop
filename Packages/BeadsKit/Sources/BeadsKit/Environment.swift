@@ -19,7 +19,8 @@ public struct AppPaths: Sendable {
         )
         return AppPaths(
             root: support.appending(path: bundleID, directoryHint: .isDirectory),
-            sshControlDir: URL(filePath: "/tmp/beads-\(getuid())", directoryHint: .isDirectory)
+            // Per app (bundle id) so the release and debug apps never share ssh master connections.
+            sshControlDir: URL(filePath: "/tmp/beads-\(ToolEnvironment.shortTag(bundleID))-\(getuid())", directoryHint: .isDirectory)
         )
     }
 
@@ -161,8 +162,12 @@ public struct ToolEnvironment: Sendable {
 
     /// Short stable tag for an identity (8 hex chars of FNV-1a over the key path).
     static func identityTag(_ identity: SSHIdentity) -> String {
-        let input = identity.privateKeyPath ?? "default"
-        var hash: UInt64 = 0xcbf29ce484222325 // FNV-1a 64; collision resistance is not a security property here
+        shortTag(identity.privateKeyPath ?? "default")
+    }
+
+    /// 8 hex chars of FNV-1a; collision resistance is not a security property here (paths only).
+    static func shortTag(_ input: String) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325 // FNV-1a 64
         for byte in input.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
         return String(format: "%08x", UInt32(truncatingIfNeeded: hash ^ (hash >> 32)))
     }

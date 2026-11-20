@@ -11,8 +11,8 @@ targets:
     type: application
     platform: macOS
     configFiles:
-      Debug: Config/App.xcconfig
-      Release: Config/App.xcconfig
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
     sources:
       - App
       - path: Resources/Graph
@@ -21,8 +21,20 @@ targets:
       - path: Resources/Icon/AppIcon.icon
         type: file
         buildPhase: resources
+      - path: Resources/Icon/AppIcon-Debug.icon
+        type: file
+        buildPhase: resources
     dependencies:
       - package: BeadsKit
+    preBuildScripts:
+      - name: Guard Release builds
+        # Release (production) is built only by scripts/build-release.sh, never from the Xcode UI.
+        script: |
+          if [ "${CONFIGURATION}" = "Release" ] && [ "${BEADS_RELEASE_BUILD:-NO}" != "YES" ]; then
+            echo "error: Release builds are made with scripts/build-release.sh. Use the Debug app (BeadsDesktop Debug) for development." >&2
+            exit 1
+          fi
+        basedOnDependencyAnalysis: false
     postBuildScripts:
       - name: Embed dolt
         script: "\"${SRCROOT}/scripts/embed-dolt.sh\""
@@ -32,8 +44,18 @@ targets:
           - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/dolt
 schemes:
   BeadsDesktop:
+    # Every Xcode action uses Debug: running from Xcode always launches "BeadsDesktop Debug".
     build:
       targets:
         BeadsDesktop: all
+    run:
+      config: Debug
     test:
+      config: Debug
       targets: []
+    profile:
+      config: Debug
+    analyze:
+      config: Debug
+    archive:
+      config: Debug

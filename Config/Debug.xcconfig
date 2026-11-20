@@ -1,0 +1,8 @@
+// Debug app: a separate macOS app that can run next to the release one on the same Mac.
+// Everything keyed by the bundle id is separate: Application Support data, preferences, notification
+// permission, saved windows, ssh control sockets.
+#include "App.xcconfig"
+
+APP_DISPLAY_NAME = BeadsDesktop Debug
+PRODUCT_BUNDLE_IDENTIFIER = uz.dkamaloff.beads.debug
+APP_ICON_NAME = AppIcon-Debug

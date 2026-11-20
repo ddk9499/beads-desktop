@@ -14,8 +14,30 @@ Requires Xcode 26+, [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew ins
 ```sh
 ./scripts/fetch-dolt.sh          # pinned dolt 2.7.5 → Vendor/dolt/dolt (checksum-verified, gitignored)
 xcodegen generate                # BeadsDesktop.xcodeproj (generated, gitignored)
-open BeadsDesktop.xcodeproj      # or: xcodebuild -scheme BeadsDesktop -derivedDataPath build/DerivedData build
+open BeadsDesktop.xcodeproj      # Run → "BeadsDesktop Debug" (the scheme uses Debug for every action)
 ```
+
+**Production (Release) builds only by command:**
+
+```sh
+./scripts/build-release.sh            # → dist/BeadsDesktop.app
+./scripts/build-release.sh --install  # … and copy to /Applications
+```
+
+A Release build started any other way (Xcode UI, plain `xcodebuild -configuration Release`) fails on purpose in the
+"Guard Release builds" phase, so the production app is never launched by accident from Xcode.
+
+## Debug and Release are separate apps
+
+| Configuration | App | Bundle ID | Icon |
+|---|---|---|---|
+| Release | `BeadsDesktop.app` | `uz.dkamaloff.beads` | `Resources/Icon/AppIcon.icon` |
+| Debug | `BeadsDesktop Debug.app` | `uz.dkamaloff.beads.debug` | `Resources/Icon/AppIcon-Debug.icon` (orange) |
+
+Both can be installed and run at the same time on one Mac. Everything keyed by the bundle id is separate:
+Application Support data (projects, snapshots), preferences, notification permission, saved windows, and the ssh
+control-socket folder (`/tmp/beads-<tag>-<uid>`). Identity lives in `Config/Debug.xcconfig` / `Config/Release.xcconfig`
+on top of the shared `Config/App.xcconfig`.
 
 ## Signing (needed for notifications)
 
@@ -63,7 +85,7 @@ Data from the remote is untrusted:
 ## Debugging the UI from a script (Debug builds only)
 
 ```sh
-build/DerivedData/Build/Products/Debug/BeadsDesktop.app/Contents/MacOS/BeadsDesktop \
+open "build/DerivedData/Build/Products/Debug/BeadsDesktop Debug.app" --args \
   -debugSelectProject gastownhall/beads -debugSelectIssue bd-7vb13 -debugPlainDetail YES \
   -debugSnapshot /tmp/shot.png -debugSnapshotDelay 8
 ```

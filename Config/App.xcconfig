@@ -1,7 +1,10 @@
 // Single source of truth for the app's identity.
 // Rename the app by changing APP_DISPLAY_NAME only; data paths are keyed by the bundle id.
+// Shared base; Debug.xcconfig / Release.xcconfig set the per-configuration identity on top of it.
 APP_DISPLAY_NAME = BeadsDesktop
 PRODUCT_NAME = $(APP_DISPLAY_NAME)
+// Stable module name even when the product name gets a suffix ("BeadsDesktop Debug").
+PRODUCT_MODULE_NAME = BeadsDesktop
 PRODUCT_BUNDLE_IDENTIFIER = uz.dkamaloff.beads
 MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
@@ -13,7 +16,8 @@ SWIFT_VERSION = 6.0
 
 GENERATE_INFOPLIST_FILE = YES
 // Icon Composer file Resources/Icon/AppIcon.icon (layers: beads, headers, columns; concept "Bead Board").
-ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+APP_ICON_NAME = AppIcon
+ASSETCATALOG_COMPILER_APPICON_NAME = $(APP_ICON_NAME)
 INFOPLIST_KEY_CFBundleDisplayName = $(APP_DISPLAY_NAME)
 INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.developer-tools
 INFOPLIST_KEY_NSHumanReadableCopyright =
