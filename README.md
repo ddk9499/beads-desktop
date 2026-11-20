@@ -21,11 +21,31 @@ open BeadsDesktop.xcodeproj      # Run → "BeadsDesktop Debug" (the scheme uses
 
 ```sh
 ./scripts/build-release.sh            # → dist/BeadsDesktop.app
+./scripts/build-release.sh --dmg      # … and the installer dist/BeadsDesktop-<version>.dmg (+ .sha256)
 ./scripts/build-release.sh --install  # … and copy to /Applications
+BEADS_VERSION=0.2.0 BEADS_BUILD_NUMBER=12 ./scripts/build-release.sh --dmg   # set version/build number
 ```
 
 A Release build started any other way (Xcode UI, plain `xcodebuild -configuration Release`) fails on purpose in the
 "Guard Release builds" phase, so the production app is never launched by accident from Xcode.
+
+## Releases
+
+Releases are built and published from this Mac (no GitHub Actions minutes; the app is signed with your identity from
+`Config/Signing.xcconfig`):
+
+```sh
+scripts/release.sh v0.2.0 --dry-run     # checks + build, publishes nothing
+scripts/release.sh v0.2.0               # build, show a summary, ask, then publish
+scripts/release.sh v0.3.0-beta.1 --prerelease
+```
+
+The script refuses to run with uncommitted changes or an unpushed commit, or if the tag exists. It builds
+`dist/BeadsDesktop-<version>.dmg` (version = tag without `v`, build number = commit count), then creates the tag on the
+current commit and a GitHub Release with the DMG and its `.sha256` via `gh`.
+
+Without notarization (needs a paid Developer ID), macOS on another Mac asks to allow the app on first launch:
+System Settings → Privacy & Security → "Open Anyway".
 
 ## Debug and Release are separate apps
 
