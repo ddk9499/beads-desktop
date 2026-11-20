@@ -87,6 +87,9 @@ enum SettingsKeys {
     static let doneWindowDays = "doneWindowDays"
     static let boardSort = "boardSort"
     static let pollSeconds = "pollSeconds"
+    static let autoUpdateCheck = "autoUpdateCheck"
+    static let includePrereleases = "includePrereleases"
+    static let skippedVersion = "skippedVersion"
 
     static func parse(_ raw: String) -> Set<String> {
         Set(raw.split(whereSeparator: { $0 == "," || $0 == "\n" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })

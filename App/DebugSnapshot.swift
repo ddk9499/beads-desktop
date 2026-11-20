@@ -13,8 +13,10 @@ enum DebugSnapshot {
             for w in NSApp.windows {
                 FileHandle.standardError.write(Data("window \(type(of: w)) visible=\(w.isVisible) frame=\(w.frame) title=\(w.title)\n".utf8))
             }
-            // The main window is the largest visible one (sheets/panels/popovers are smaller).
-            guard let window = NSApp.windows.filter({ $0.isVisible && $0.contentView != nil })
+            // `-debugSnapshotWindow <title>` picks a window by title; otherwise the largest visible one.
+            let visible = NSApp.windows.filter { $0.isVisible && $0.contentView != nil }
+            let titled = defaults.string(forKey: "debugSnapshotWindow").flatMap { t in visible.first { $0.title == t } }
+            guard let window = titled ?? visible
                     .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }),
                   let view = window.contentView?.superview ?? window.contentView,
                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }

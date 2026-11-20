@@ -18,6 +18,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DebugSnapshot.scheduleIfRequested()
         #endif
         Task { await model.start() }
+        UpdateController.shared.checkAtLaunch()
+        #if DEBUG
+        // Debug-only: `-debugCheckUpdates YES` opens the update window at launch (UI checks).
+        if UserDefaults.standard.bool(forKey: "debugCheckUpdates") { UpdateController.shared.checkNow() }
+        #endif
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil,
                                                queue: .main) { [model] _ in
             MainActor.assumeIsolated { model.appDidBecomeActive() }
@@ -37,6 +42,9 @@ struct BeadsDesktopApp: App {
         }
         .defaultSize(width: 1440, height: 900)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { UpdateController.shared.checkNow() }
+            }
             CommandGroup(after: .toolbar) {
                 Button("Refresh All") { Task { await delegate.model.syncAll() } }
                     .keyboardShortcut("r")
@@ -183,6 +191,8 @@ struct SettingsView: View {
                 Text("Shown when a background refresh finds changes. While the app is in front, changed cards are highlighted instead.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+
+            UpdateSettingsSection()
 
             Section {
                 TextField("Human names", text: $humanNames, prompt: Text("alice, Alice Smith"), axis: .vertical)

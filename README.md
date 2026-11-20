@@ -47,6 +47,22 @@ current commit and a GitHub Release with the DMG and its `.sha256` via `gh`.
 Without notarization (needs a paid Developer ID), macOS on another Mac asks to allow the app on first launch:
 System Settings → Privacy & Security → "Open Anyway".
 
+## In-app updates
+
+The release app checks GitHub Releases of `ddk9499/beads-desktop` at launch (Settings → Updates; also
+BeadsDesktop → Check for Updates…). If a release with a higher version (SemVer; pre-releases only when enabled) has
+`BeadsDesktop-<version>.dmg`, it offers Install & Relaunch / Later / Skip This Version. Installing:
+
+1. downloads the DMG in the background with progress (token: Keychain from Settings, else `gh auth token`; the token is
+   sent only to api.github.com, never to the storage redirect);
+2. verifies the SHA-256 from the release's `.sha256`, then the app inside: same bundle id, the release's version, valid
+   code signature, and the same Team ID as the running app;
+3. quits; a small script swaps the `.app` in place (restoring the old one if anything fails) and relaunches it.
+
+The Debug app can check but never installs. End-to-end test without publishing anything: build an older release
+(`BEADS_VERSION=0.0.9 scripts/build-release.sh`), copy `dist/BeadsDesktop.app` somewhere writable and run
+`open --env BEADS_UPDATE_TEST_AUTOINSTALL=1 --stderr /tmp/upd.log <copy>` — it installs the newest release and logs each step.
+
 ## Debug and Release are separate apps
 
 | Configuration | App | Bundle ID | Icon |
