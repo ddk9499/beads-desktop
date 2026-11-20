@@ -1,0 +1,119 @@
+# Manual release: creates the tag from the input, builds the Release app signed with your Apple Development
+# certificate, and attaches the DMG installer (+ .sha256) to a GitHub Release.
+# Run: Actions → Release → Run workflow, or `gh workflow run release.yml -f tag=v0.2.0`.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   APPLE_CERT_P12_BASE64  base64 of the exported "Apple Development" certificate + private key (.p12)
+#   APPLE_CERT_PASSWORD    password of that .p12
+#   APPLE_TEAM_ID          its Team ID (the in-app updater only accepts builds from this team)
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "New tag, e.g. v0.2.0 (the app version is the tag without the leading v)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the GitHub Release as a pre-release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # create the tag and the release
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26 # Apple silicon, Xcode 26 (macOS 26 SDK, Icon Composer icons)
+    timeout-minutes: 45
+    env:
+      # Inputs go through env, never interpolated into scripts.
+      TAG: ${{ inputs.tag }}
+      PRERELEASE: ${{ inputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate tag
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::Tag must look like v1.2.3 or v1.2.3-beta.1 (got '$TAG')"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG already exists"
+            exit 1
+          fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      - name: Import signing certificate
+        env:
+          P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$P12_BASE64" ] || [ -z "$P12_PASSWORD" ] || [ -z "$TEAM_ID" ]; then
+            echo "::error::Set the APPLE_CERT_P12_BASE64, APPLE_CERT_PASSWORD and APPLE_TEAM_ID repository secrets"
+            exit 1
+          fi
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          # Apple's intermediate for Apple Development certificates (in case the image lacks it).
+          curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k "$KEYCHAIN" >/dev/null 2>&1 || true
+
+          umask 077
+          printf '%s' "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -f pkcs12 -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+
+          # Put the keychain first in the search list so codesign/xcodebuild find the identity.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          echo "SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Build signed DMG
+        env:
+          BEADS_VERSION: ${{ env.VERSION }}
+          BEADS_BUILD_NUMBER: ${{ github.run_number }}
+          BEADS_SIGN_IDENTITY: Apple Development
+          BEADS_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: ./scripts/build-release.sh --dmg
+
+      - name: Create tag and GitHub Release
+        run: |
+          flags=""
+          if [ "$PRERELEASE" = "true" ]; then flags="--prerelease"; fi
+          # gh creates the tag at the commit that was built.
+          # shellcheck disable=SC2086
+          gh release create "$TAG" \
+            "dist/BeadsDesktop-$VERSION.dmg" \
+            "dist/BeadsDesktop-$VERSION.dmg.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "BeadsDesktop $VERSION" \
+            --generate-notes \
+            $flags
+
+      - name: Remove signing keychain
+        if: always()
+        run: |
+          if [ -n "${SIGNING_KEYCHAIN:-}" ]; then security delete-keychain "$SIGNING_KEYCHAIN" || true; fi

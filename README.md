@@ -31,18 +31,30 @@ A Release build started any other way (Xcode UI, plain `xcodebuild -configuratio
 
 ## Releases
 
-Releases are built and published from this Mac (no GitHub Actions minutes; the app is signed with your identity from
-`Config/Signing.xcconfig`):
+**GitHub Actions (main way, free for this public repo):** Actions → **Release** → Run workflow with a new tag such
+as `v0.2.0` (or `gh workflow run release.yml -f tag=v0.2.0`). The workflow (`.github/workflows/release.yml`,
+`macos-26` runner) checks the tag, imports your signing certificate into a temporary keychain, builds the DMG with
+`scripts/build-release.sh --dmg` (version = tag without `v`, build number = run number, Team ID verified), creates
+the tag on the built commit and a GitHub Release with `BeadsDesktop-<version>.dmg` and its `.sha256`, then deletes the
+keychain. Repository secrets it needs:
+
+| Secret | Value |
+|---|---|
+| `APPLE_CERT_P12_BASE64` | `base64 -i cert.p12` of the exported "Apple Development" certificate **with its private key** |
+| `APPLE_CERT_PASSWORD` | the password chosen when exporting the `.p12` |
+| `APPLE_TEAM_ID` | the certificate's Team ID |
+
+Builds must be signed by the same team as the installed app, otherwise the in-app updater refuses them.
+
+**Locally (fallback):**
 
 ```sh
 scripts/release.sh v0.2.0 --dry-run     # checks + build, publishes nothing
 scripts/release.sh v0.2.0               # build, show a summary, ask, then publish
-scripts/release.sh v0.3.0-beta.1 --prerelease
 ```
 
-The script refuses to run with uncommitted changes or an unpushed commit, or if the tag exists. It builds
-`dist/BeadsDesktop-<version>.dmg` (version = tag without `v`, build number = commit count), then creates the tag on the
-current commit and a GitHub Release with the DMG and its `.sha256` via `gh`.
+It refuses to run with uncommitted changes, an unpushed commit, or an existing tag, and signs with
+`Config/Signing.xcconfig`.
 
 Without notarization (needs a paid Developer ID), macOS on another Mac asks to allow the app on first launch:
 System Settings → Privacy & Security → "Open Anyway".

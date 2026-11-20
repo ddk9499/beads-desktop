@@ -9,6 +9,8 @@
 # Optional environment:
 #   BEADS_VERSION       marketing version (CFBundleShortVersionString), e.g. 0.2.0
 #   BEADS_BUILD_NUMBER  build number (CFBundleVersion), e.g. the CI run number
+#   BEADS_SIGN_IDENTITY signing identity, e.g. "Apple Development" (default: Config/Signing.xcconfig or ad-hoc)
+#   BEADS_TEAM_ID       Team ID for that identity; the built app's signature must carry it
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -23,28 +25,43 @@ for arg in "$@"; do
   esac
 done
 
-# Versions go into Info.plist: allow only plain version strings.
+# Values go into build settings / Info.plist: allow only plain strings.
 check() { printf '%s' "$2" | grep -Eq "$3" || { echo "invalid $1: $2" >&2; exit 2; }; }
-SETTINGS="BEADS_RELEASE_BUILD=YES"
+
+DERIVED="$ROOT/build/release"
+# xcodebuild arguments as a proper list (the identity contains spaces).
+set -- -project BeadsDesktop.xcodeproj -scheme BeadsDesktop -configuration Release \
+  -destination "platform=macOS,arch=arm64" -derivedDataPath "$DERIVED" BEADS_RELEASE_BUILD=YES
 if [ -n "${BEADS_VERSION:-}" ]; then
   check BEADS_VERSION "$BEADS_VERSION" '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
-  SETTINGS="$SETTINGS MARKETING_VERSION=$BEADS_VERSION"
+  set -- "$@" "MARKETING_VERSION=$BEADS_VERSION"
 fi
 if [ -n "${BEADS_BUILD_NUMBER:-}" ]; then
   check BEADS_BUILD_NUMBER "$BEADS_BUILD_NUMBER" '^[0-9]+$'
-  SETTINGS="$SETTINGS CURRENT_PROJECT_VERSION=$BEADS_BUILD_NUMBER"
+  set -- "$@" "CURRENT_PROJECT_VERSION=$BEADS_BUILD_NUMBER"
+fi
+if [ -n "${BEADS_SIGN_IDENTITY:-}" ]; then
+  check BEADS_SIGN_IDENTITY "$BEADS_SIGN_IDENTITY" '^[A-Za-z0-9 :().@_-]+$'
+  [ -n "${BEADS_TEAM_ID:-}" ] || { echo "BEADS_SIGN_IDENTITY needs BEADS_TEAM_ID" >&2; exit 2; }
+  # Manual style: no Xcode account on CI, and this app needs no provisioning profile.
+  set -- "$@" CODE_SIGN_STYLE=Manual "CODE_SIGN_IDENTITY=$BEADS_SIGN_IDENTITY" PROVISIONING_PROFILE_SPECIFIER=
+fi
+if [ -n "${BEADS_TEAM_ID:-}" ]; then
+  check BEADS_TEAM_ID "$BEADS_TEAM_ID" '^[A-Z0-9]{10}$'
+  set -- "$@" "DEVELOPMENT_TEAM=$BEADS_TEAM_ID"
 fi
 
 "$ROOT/scripts/fetch-dolt.sh" >/dev/null
 xcodegen generate --quiet
-
-DERIVED="$ROOT/build/release"
-# shellcheck disable=SC2086 # SETTINGS is a list of validated KEY=VALUE words
-xcodebuild -project BeadsDesktop.xcodeproj -scheme BeadsDesktop -configuration Release -destination "platform=macOS,arch=arm64" \
-  -derivedDataPath "$DERIVED" $SETTINGS build -quiet
+xcodebuild "$@" build -quiet
 
 APP="$DERIVED/Build/Products/Release/BeadsDesktop.app"
 codesign --verify --deep --strict "$APP"
+if [ -n "${BEADS_TEAM_ID:-}" ]; then
+  # The in-app updater only accepts builds from the same team: refuse to ship anything else.
+  TEAM="$(codesign -dv "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+  [ "$TEAM" = "$BEADS_TEAM_ID" ] || { echo "error: app is signed by team '$TEAM', expected $BEADS_TEAM_ID" >&2; exit 1; }
+fi
 mkdir -p "$ROOT/dist"
 rm -rf "$ROOT/dist/BeadsDesktop.app"
 ditto "$APP" "$ROOT/dist/BeadsDesktop.app"
