@@ -94,20 +94,24 @@ public enum ProcessRunner {
 
         // Drain pipes concurrently so a full pipe buffer can never deadlock the child. Reading stops
         // accumulating past the limit and the process is killed.
-        async let outData: Data = Task.detached {
-            guard let handle = outPipe?.fileHandleForReading else { return Data() }
+        // Pipe reads block a thread until EOF: they run on GCD threads, never on the Swift concurrency pool
+        // (blocking that pool starves every other task, including the timeout below, on machines with few cores).
+        let outReader = outPipe?.fileHandleForReading
+        async let outData: Data = onBlockingThread {
+            guard let handle = outReader else { return Data() }
             return drain(handle, limit: outputLimit) { reason.set(.outputTooLarge); stopper.stop() }
-        }.value
-        async let errData: Data = Task.detached {
+        }
+        async let errData: Data = onBlockingThread {
             drain(errPipe.fileHandleForReading, limit: stderrLimit) {}
-        }.value
+        }
 
-        let timeoutTask = Task {
-            try? await Task.sleep(for: .seconds(timeout))
-            guard !Task.isCancelled, process.isRunning else { return }
+        // A GCD timer, independent of the concurrency pool, so it fires on time under load.
+        let timeoutTimer = DispatchWorkItem {
+            guard process.isRunning else { return }
             reason.set(.timedOut)
             stopper.stop()
         }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: timeoutTimer)
 
         let status: Int32 = await withTaskCancellationHandler {
             var status: Int32 = -1
@@ -117,7 +121,7 @@ public enum ProcessRunner {
             reason.set(.cancelled)
             stopper.stop()
         }
-        timeoutTask.cancel()
+        timeoutTimer.cancel()
         let (out, err) = await (outData, errData)
 
         switch reason.value {
@@ -125,6 +129,13 @@ public enum ProcessRunner {
         case .outputTooLarge: throw ProcessError.outputTooLarge(executable: executable.lastPathComponent, limit: outputLimit)
         case .cancelled: throw ProcessError.cancelled(executable: executable.lastPathComponent)
         case nil: return ProcessOutput(status: status, stdout: out, stderr: err)
+        }
+    }
+
+    /// Runs blocking work on a GCD thread and resumes the caller when it finishes.
+    static func onBlockingThread<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async { continuation.resume(returning: work()) }
         }
     }
 

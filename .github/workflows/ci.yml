@@ -29,6 +29,9 @@ jobs:
 
       - name: Tests (unit + offline; network tests are skipped without BEADS_IT_* secrets)
         working-directory: Packages/BeadsKit
+        env:
+          # One-thread Swift concurrency pool: anything that blocks it (and starves timeouts) fails here.
+          LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
         run: swift test
 
       - name: Debug build
