@@ -1,0 +1,43 @@
+# Tests and a Debug build for every pull request to main and every push to main.
+# Required status check for main: "Tests and build".
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: # also started by update-dolt.yml for its PR branches (bot-opened PRs don't trigger CI)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests and build
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch pinned dolt
+        run: ./scripts/fetch-dolt.sh
+
+      - name: Tests (unit + offline; network tests are skipped without BEADS_IT_* secrets)
+        working-directory: Packages/BeadsKit
+        env:
+          # One-thread Swift concurrency pool: anything that blocks it (and starves timeouts) fails here.
+          LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
+        run: swift test
+
+      - name: Debug build
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen generate --quiet
+          xcodebuild -project BeadsDesktop.xcodeproj -scheme BeadsDesktop -destination "platform=macOS,arch=arm64" \
+            -derivedDataPath build/DerivedData CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build -quiet

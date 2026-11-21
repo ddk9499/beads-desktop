@@ -75,6 +75,16 @@ The Debug app can check but never installs. End-to-end test without publishing a
 (`BEADS_VERSION=0.0.9 scripts/build-release.sh`), copy `dist/BeadsDesktop.app` somewhere writable and run
 `open --env BEADS_UPDATE_TEST_AUTOINSTALL=1 --stderr /tmp/upd.log <copy>` — it installs the newest release and logs each step.
 
+## Keeping dolt up to date
+
+The bundled dolt is pinned (version + sha256) in `scripts/fetch-dolt.sh`.
+
+- **Automatically:** `.github/workflows/update-dolt.yml` runs every Monday (and via Actions → Update dolt → Run
+  workflow). If the newest stable dolt release that is at least 7 days old is newer than the pinned one, it pins it,
+  runs the tests and a Debug build on macOS, and opens a pull request `deps/dolt-<version>` assigned to the repository
+  owner. Merge it, then release.
+- **By hand:** `scripts/update-dolt.sh 2.8.0` (downloads, records the sha256, fetches), then `swift test`.
+
 ## Debug and Release are separate apps
 
 | Configuration | App | Bundle ID | Icon |
@@ -95,6 +105,12 @@ so for notifications sign with an Apple Development certificate (free Apple ID i
 1. Xcode → Settings → Accounts → add your Apple ID → Manage Certificates → **+ Apple Development**.
 2. `cp Config/Signing.example.xcconfig Config/Signing.xcconfig` and put your Team ID there.
 3. `xcodegen generate` and rebuild.
+
+## CI
+
+`.github/workflows/ci.yml` runs the BeadsKit tests and a Debug build on every pull request to `main` and every push to
+`main`. "Tests and build" is a required status check for merging into `main`. Dolt-update PRs (opened by a bot, which
+doesn't trigger workflows) start it themselves.
 
 ## Tests
 
