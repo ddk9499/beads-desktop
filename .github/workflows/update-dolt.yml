@@ -95,7 +95,9 @@ jobs:
             echo "Before merging: skim the release notes for storage-format changes (the app checks the manifest"
             echo "format \`5:__DOLT__\` in \`SnapshotStore.supportedManifest\`), then ship a new app release."
           } > "$RUNNER_TEMP/body.md"
-          gh pr create --base main --head "$branch" --title "Bump bundled dolt to $VERSION" --body-file "$RUNNER_TEMP/body.md"
+          # Assigned to the repository owner so it shows up in their "Assigned" list and notifications.
+          gh pr create --base main --head "$branch" --title "Bump bundled dolt to $VERSION" --body-file "$RUNNER_TEMP/body.md" \
+            --assignee "$GITHUB_REPOSITORY_OWNER"
           # PRs opened with GITHUB_TOKEN don't trigger other workflows; start CI explicitly so the
           # required "Tests and build" check shows up on the PR.
           gh workflow run ci.yml --ref "$branch"

@@ -81,7 +81,8 @@ The bundled dolt is pinned (version + sha256) in `scripts/fetch-dolt.sh`.
 
 - **Automatically:** `.github/workflows/update-dolt.yml` runs every Monday (and via Actions → Update dolt → Run
   workflow). If the newest stable dolt release that is at least 7 days old is newer than the pinned one, it pins it,
-  runs the tests and a Debug build on macOS, and opens a pull request `deps/dolt-<version>`. Merge it, then release.
+  runs the tests and a Debug build on macOS, and opens a pull request `deps/dolt-<version>` assigned to the repository
+  owner. Merge it, then release.
 - **By hand:** `scripts/update-dolt.sh 2.8.0` (downloads, records the sha256, fetches), then `swift test`.
 
 ## Debug and Release are separate apps
