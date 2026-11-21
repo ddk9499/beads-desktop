@@ -1,0 +1,101 @@
+# Automatic updates for the bundled dolt (a version pinned in a shell script, which Dependabot can't track).
+# Weekly (and on demand): if the newest stable dolt release that is at least MIN_AGE_DAYS old is newer than the
+# pinned one, pin it with scripts/update-dolt.sh, run the tests and a Debug build on macOS, and open a pull request.
+name: Update dolt
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write # start CI for the PR branch
+
+concurrency:
+  group: update-dolt
+  cancel-in-progress: false
+
+env:
+  MIN_AGE_DAYS: "7" # don't adopt brand-new releases
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.find.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Find a newer dolt release
+        id: find
+        run: |
+          current="$(sed -n 's/^DOLT_VERSION="\(.*\)"/\1/p' scripts/fetch-dolt.sh)"
+          cutoff="$(date -u -d "-${MIN_AGE_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)"
+          candidate="$(gh api 'repos/dolthub/dolt/releases?per_page=50' --jq \
+            "[.[] | select(.draft | not) | select(.prerelease | not) | select(.published_at <= \"$cutoff\")
+                  | .tag_name | ltrimstr(\"v\") | select(test(\"^[0-9]+\\\\.[0-9]+\\\\.[0-9]+$\"))] | .[0] // empty")"
+          echo "pinned: $current, newest release older than ${MIN_AGE_DAYS} days: ${candidate:-none}"
+          if [ -z "$candidate" ] || [ "$candidate" = "$current" ]; then exit 0; fi
+          newest="$(printf '%s\n%s\n' "$current" "$candidate" | sort -V | tail -1)"
+          if [ "$newest" != "$candidate" ]; then exit 0; fi
+          if [ -n "$(gh pr list --head "deps/dolt-$candidate" --state all --json number --jq '.[0].number // empty')" ]; then
+            echo "a pull request for dolt $candidate already exists"; exit 0
+          fi
+          echo "version=$candidate" >> "$GITHUB_OUTPUT"
+
+  update:
+    needs: check
+    if: needs.check.outputs.version != ''
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pin the new dolt
+        run: |
+          old="$(sed -n 's/^DOLT_VERSION="\(.*\)"/\1/p' scripts/fetch-dolt.sh)"
+          echo "OLD=$old" >> "$GITHUB_ENV"
+          ./scripts/update-dolt.sh "$VERSION"
+
+      - name: Test (reads the committed fixture with the new dolt, sandbox, …)
+        working-directory: Packages/BeadsKit
+        run: swift test 2>&1 | tee "$RUNNER_TEMP/test.log"
+
+      - name: Debug build (embeds and signs dolt)
+        run: |
+          brew install xcodegen
+          xcodegen generate --quiet
+          xcodebuild -project BeadsDesktop.xcodeproj -scheme BeadsDesktop -destination "platform=macOS,arch=arm64" \
+            -derivedDataPath build/DerivedData CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build -quiet
+
+      - name: Open pull request
+        run: |
+          branch="deps/dolt-$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add scripts/fetch-dolt.sh
+          git commit -m "Bump bundled dolt from $OLD to $VERSION"
+          git push origin "$branch"
+          summary="$(grep -E 'Test run with' "$RUNNER_TEMP/test.log" | tail -1)"
+          {
+            echo "Bumps the bundled dolt from **$OLD** to **$VERSION** ([release notes](https://github.com/dolthub/dolt/releases/tag/v$VERSION))."
+            echo
+            echo "- \`dolt-darwin-arm64.tar.gz\` sha256: \`$(sed -n 's/^DOLT_SHA256="\(.*\)".*/\1/p' scripts/fetch-dolt.sh)\`"
+            echo "- Tests: $summary"
+            echo "- Debug app builds and embeds the new binary."
+            echo
+            echo "Before merging: skim the release notes for storage-format changes (the app checks the manifest"
+            echo "format \`5:__DOLT__\` in \`SnapshotStore.supportedManifest\`), then ship a new app release."
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create --base main --head "$branch" --title "Bump bundled dolt to $VERSION" --body-file "$RUNNER_TEMP/body.md"
+          # PRs opened with GITHUB_TOKEN don't trigger other workflows; start CI explicitly so the
+          # required "Tests and build" check shows up on the PR.
+          gh workflow run ci.yml --ref "$branch"
